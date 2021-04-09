@@ -34,10 +34,21 @@ class TestGenomeData(test_species.GenomeTestBase):
 
     genome = stdpopsim.get_species("DroSec").genome
 
-    @pytest.mark.skip("Recombination rate QC not done yet")
-    @pytest.mark.parametrize(["name", "rate"], {}.items())
+    @pytest.mark.parametrize(
+        ["name", "rate"],
+        {
+            "X": 2.85e-8,
+            "2L": 2.28e-8,
+            "2R": 2.51e-8,
+            "3L": 1.88e-8,
+            "3R": 1.91e-8,
+            "4": 4.49e-7,
+        }.items(),
+    )
     def test_recombination_rate(self, name, rate):
-        assert pytest.approx(rate, self.genome.get_chromosome(name).recombination_rate)
+        assert pytest.approx(
+            rate, self.genome.get_chromosome(name).recombination_rate, rel=1e-9
+        )
 
     @pytest.mark.skip("Mutation rate QC not done yet")
     @pytest.mark.parametrize(["name", "rate"], {}.items())
