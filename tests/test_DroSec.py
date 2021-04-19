@@ -37,17 +37,17 @@ class TestGenomeData(test_species.GenomeTestBase):
     @pytest.mark.parametrize(
         ["name", "rate"],
         {
-            "X": 2.85e-8,
-            "2L": 2.28e-8,
-            "2R": 2.51e-8,
-            "3L": 1.88e-8,
-            "3R": 1.91e-8,
-            "4": 4.49e-7,
+            "X": 2.99601570921329e-8,
+            "2L": 2.40487093035123e-8,
+            "2R": 2.66915626038874e-8,
+            "3L": 1.79556372412945e-8,
+            "3R": 1.97317740267327e-8,
+            "4": 2.31848167461603e-8,
         }.items(),
     )
     def test_recombination_rate(self, name, rate):
-        assert pytest.approx(
-            rate, self.genome.get_chromosome(name).recombination_rate, rel=1e-9
+        assert rate == pytest.approx(
+            self.genome.get_chromosome(name).recombination_rate
         )
 
     @pytest.mark.skip("Mutation rate QC not done yet")
