@@ -57,6 +57,7 @@ def _ooa_3():
     ]
 
     generation_time = 25
+    mutation_rate = 2.35e-8
 
     # First we set out the maximum likelihood values of the various parameters
     # given in Table 1.
@@ -89,6 +90,7 @@ def _ooa_3():
         populations=populations,
         citations=citations,
         generation_time=generation_time,
+        mutation_rate=mutation_rate,
         # Population IDs correspond to their indexes in the population
         # configuration array. Therefore, we have 0=YRI, 1=CEU and 2=CHB
         # initially.
@@ -137,7 +139,7 @@ def _ooa_2():
     id = "OutOfAfrica_2T12"
     description = "Two population out-of-Africa"
     long_description = """
-        The model is derived from the Tennesen et al. analysis of the
+        The model is derived from the Tennessen et al. analysis of the
         jSFS from European Americans and African Americans.
         It describes the ancestral human population in Africa, the out of Africa event,
         and two distinct periods of subsequent European population growth over the past
@@ -158,6 +160,7 @@ def _ooa_2():
     ]
 
     generation_time = 25
+    mutation_rate = 2.36e-8  # from Gravel et al, 2011, PNAS
 
     T_AF = 148e3 / generation_time
     T_OOA = 51e3 / generation_time
@@ -191,6 +194,7 @@ def _ooa_2():
         populations=populations,
         citations=citations,
         generation_time=generation_time,
+        mutation_rate=mutation_rate,
         population_configurations=[
             msprime.PopulationConfiguration(
                 initial_size=N_AF, growth_rate=r_AF, metadata=populations[0].asdict()
@@ -243,6 +247,7 @@ def _african():
     citations = [_tennessen_et_al]
 
     generation_time = 25
+    mutation_rate = 2.36e-8  # from Gravel et al, 2011, PNAS
 
     T_AF = 148e3 / generation_time
     T_EG = 5115 / generation_time
@@ -264,6 +269,7 @@ def _african():
         populations=populations,
         citations=citations,
         generation_time=generation_time,
+        mutation_rate=mutation_rate,
         population_configurations=[
             msprime.PopulationConfiguration(
                 initial_size=N_AF, growth_rate=r_AF, metadata=populations[0].asdict()
@@ -292,7 +298,10 @@ def _america():
         demographic history to simulate an admixed population with admixture
         occurring 12 generations ago. The admixed population had an initial size
         of 30,000 and grew at a rate of 5% per generation, with 1/6 of the
-        population of African ancestry, 1/3 European, and 1/2 Asian.
+        population of African ancestry, 1/3 European, and 1/2 Asian. Note that this
+        demographic model was not inferred, and the mutation rate that Browning et al.
+        used for simulation is smaller than used for inferring the model,
+        so the mutation rate provided here is that from Gravel et al.
     """
     populations = [
         stdpopsim.Population(id="AFR", description="Contemporary African population"),
@@ -304,13 +313,20 @@ def _america():
     citations = [
         stdpopsim.Citation(
             author="Browning et al.",
-            year=2011,
+            year=2018,
             doi="http://dx.doi.org/10.1371/journal.pgen.1007385",
             reasons={stdpopsim.CiteReason.DEM_MODEL},
-        )
+        ),
+        stdpopsim.Citation(
+            author="Gravel et al.",
+            year=2011,
+            doi="https://doi.org/10.1073/pnas.1019276108",
+            reasons={stdpopsim.CiteReason.DEM_MODEL},
+        ),
     ]
 
     generation_time = 25
+    mutation_rate = 2.36e-8
 
     # Model code was ported from Supplementary File 1.
     N0 = 7310  # initial population size
@@ -397,6 +413,7 @@ def _america():
         populations=populations,
         citations=citations,
         generation_time=generation_time,
+        mutation_rate=mutation_rate,
         population_configurations=population_configurations,
         migration_matrix=migration_matrix,
         demographic_events=demographic_events,
@@ -450,6 +467,10 @@ def _ooa_archaic():
     # In the published model, the authors used a generation time of 29 years to
     # convert from genetic to physical units
     generation_time = 29
+    # calibration of this demographic model used the recombination instead of mutation
+    # rate - as such, levels of diversity using the species default rate may not match
+    # expectations or observations in human data
+    mutation_rate = None
 
     T_AF = 300e3 / generation_time
     T_B = 60.7e3 / generation_time
@@ -568,6 +589,7 @@ def _ooa_archaic():
         populations=populations,
         citations=citations,
         generation_time=generation_time,
+        mutation_rate=mutation_rate,
         population_configurations=population_configurations,
         migration_matrix=migration_matrix,
         demographic_events=demographic_events,
@@ -598,6 +620,10 @@ def _zigzag():
     ]
 
     generation_time = 30
+    # In the original ms from Schiffels & Durbin, a mutation rate of 1.25e-8 was used.
+    # Here, we set the rate to None, as this is not a model inferred from data.
+    mutation_rate = None
+
     N0 = 5 * 14312
 
     g_1 = 0.02302578256
@@ -642,6 +668,7 @@ def _zigzag():
         populations=populations,
         citations=citations,
         generation_time=generation_time,
+        mutation_rate=mutation_rate,
         population_configurations=population_configurations,
         demographic_events=demographic_events,
     )
@@ -728,7 +755,8 @@ def _kamm_ancient_eurasia():
 
     # Times are provided in years, so we convert into generations.
     generation_time = 25
-    # Mutation_rate in Kamm et al. = 1.22e-8
+    mutation_rate = 1.22e-8
+
     # Effective population sizes
     N_Losch = 1920
     N_Mbu = 17300
@@ -888,6 +916,7 @@ def _kamm_ancient_eurasia():
         populations=populations,
         citations=citations,
         generation_time=generation_time,
+        mutation_rate=mutation_rate,
         population_configurations=population_configurations,
         demographic_events=demographic_events,
     )
@@ -954,8 +983,8 @@ def _papuans_10j19():
     ]
 
     # Inherited from Malaspinas et al., which gives the following refs:
-    generation_time = 29  # Fenner 2005
-    # mutation_rate = 1.25e-8  # per gen per site, Scally & Durbin 2012
+    generation_time = 29
+    mutation_rate = 1.4e-8
 
     N_YRI = 48433
     N_Ghost = 8516
@@ -1206,6 +1235,7 @@ def _papuans_10j19():
         populations=populations,
         citations=citations,
         generation_time=generation_time,
+        mutation_rate=mutation_rate,
         population_configurations=population_configurations,
         migration_matrix=migration_matrix,
         demographic_events=demographic_events,
@@ -1257,6 +1287,7 @@ def _AJ():
     ]
 
     generation_time = 25
+    mutation_rate = 2.5e-8
 
     # parameter value definitions based on mode from ABC
     # found in Table S3 of Gladstein and Hammer 2019
@@ -1295,6 +1326,7 @@ def _AJ():
         populations=populations,
         citations=citations,
         generation_time=generation_time,
+        mutation_rate=mutation_rate,
         population_configurations=[
             msprime.PopulationConfiguration(
                 initial_size=NYRI, metadata=populations[0].asdict()
@@ -1390,6 +1422,7 @@ def _ooa_4pop():
     ]
 
     generation_time = 29
+    mutation_rate = 1.44e-8  # from Gravel et al. 2013 (Plos Gen)
 
     # Parameter values from Table 4 (in bold)
 
@@ -1507,6 +1540,7 @@ def _ooa_4pop():
         populations=populations,
         citations=citations,
         generation_time=generation_time,
+        mutation_rate=mutation_rate,
         population_configurations=population_configurations,
         migration_matrix=migration_matrix,
         demographic_events=demographic_events,

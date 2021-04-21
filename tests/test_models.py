@@ -4,6 +4,10 @@ Tests for simulation model infrastructure.
 import unittest
 import sys
 import textwrap
+import copy
+import csv
+import pathlib
+import os
 
 import numpy as np
 import msprime
@@ -30,8 +34,8 @@ class DemographicModelTestMixin(object):
 
     def test_simulation_runs(self):
         # With a recombination_map of None, we simulate a coalescent without
-        # recombination in msprime, with no mutation.
-        contig = stdpopsim.Contig()
+        # recombination in msprime, with mutation rate equal to rate from model.
+        contig = stdpopsim.Contig(mutation_rate=self.model.mutation_rate)
         # Generate vector with 2 samples for each pop with sampling enabled
         sample_count = []
         for p in self.model.populations:
@@ -62,9 +66,19 @@ class QcdCatalogDemographicModelTestMixin(CatalogDemographicModelTestMixin):
 
     def test_qc_model_equal(self):
         d1 = self.model.model
-        d2 = self.model.qc_model
+        d2 = self.model.qc_model.model
         d1.assert_equivalent(d2, rel_tol=1e-5)
         assert d1 != d2
+
+    def test_generation_time_match(self):
+        g1 = self.model.generation_time
+        g2 = self.model.qc_model.generation_time
+        self.assertEqual(g1, g2)
+
+    def test_mutation_rate_match(self):
+        u1 = self.model.mutation_rate
+        u2 = self.model.qc_model.mutation_rate
+        self.assertEqual(u1, u2)
 
 
 # Add model specific test classes, derived from one of the above.
@@ -131,6 +145,8 @@ class TestAllModels:
         assert len(model.long_description) > 0
         assert len(model.citations) > 0
         assert model.generation_time > 0
+        if model.mutation_rate is not None:
+            assert model.mutation_rate > 0
         model.model.validate()
 
 
@@ -155,6 +171,7 @@ class TestModelOutput:
             description="abc",
             long_description="ABC " * 50,
             generation_time=1234,
+            mutation_rate=888,
             model=msprime.Demography.isolated_model([1]),
         )
         s = str(model)
@@ -166,6 +183,7 @@ class TestModelOutput:
         ║                     ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC
         ║                     ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC ABC
         ║  generation_time  = 1234
+        ║  mutation_rate    = 888
         ║  citations        = []
         """  # noqa 501
         assert textwrap.dedent(expected) in s
@@ -315,3 +333,57 @@ class TestZigZagWarning(unittest.TestCase):
         for engine in stdpopsim.all_engines():
             with self.assertWarnsRegex(UserWarning, "Zigzag_1S14"):
                 engine.simulate(model, contig, samples, dry_run=True)
+
+
+class TestMutationRates(unittest.TestCase):
+    def test_mutation_rate_warning(self):
+        species = stdpopsim.get_species("HomSap")
+        model = copy.deepcopy(species.get_demographic_model("OutOfAfrica_3G09"))
+        ###
+        # unneeded after mutation rates are included in catalog!!
+        model.mutation_rate = 2.35e-8
+        ###
+        contig = species.get_contig("chr22")
+        samples = model.get_samples(10, 10, 10)
+        for engine in stdpopsim.all_engines():
+            with self.assertWarnsRegex(UserWarning, "mutation"):
+                engine.simulate(model, contig, samples, dry_run=True)
+
+    def test_mutation_rate_match(self):
+        species = stdpopsim.get_species("HomSap")
+        model = copy.deepcopy(species.get_demographic_model("OutOfAfrica_3G09"))
+        ###
+        # unneeded after mutation rates are included in catalog!!
+        model.mutation_rate = 2.35e-8
+        ###
+        contig = species.get_contig("chr22")
+        self.assertNotEqual(model.mutation_rate, contig.mutation_rate)
+        contig = species.get_contig("chr22", mutation_rate=model.mutation_rate)
+        self.assertEqual(model.mutation_rate, contig.mutation_rate)
+        contig = species.get_contig(length=100)
+        self.assertNotEqual(model.mutation_rate, contig.mutation_rate)
+        contig = species.get_contig(length=100, mutation_rate=model.mutation_rate)
+        self.assertEqual(model.mutation_rate, contig.mutation_rate)
+
+    def test_params_match_docs_tables(self):
+        for species in stdpopsim.all_species():
+            for model in species.demographic_models:
+                table_path = pathlib.Path(
+                    os.path.join(
+                        "./docs/parameter_tables", species.id, model.id + ".csv"
+                    )
+                )
+                if model.qc_model is not None:
+                    self.assertTrue(table_path.exists())
+                    with open(table_path) as csv_file:
+                        reader = csv.reader(csv_file)
+                        param_list = list(reader)
+                        generation_time = None
+                        mutation_rate = None
+                        for param_data in param_list:
+                            if param_data[0].startswith("Generation time"):
+                                generation_time = float(param_data[1])
+                            if param_data[0].startswith("Mutation rate"):
+                                mutation_rate = float(param_data[1])
+                    self.assertEqual(model.mutation_rate, mutation_rate)
+                    self.assertEqual(model.generation_time, generation_time)
