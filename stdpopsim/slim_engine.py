@@ -57,6 +57,7 @@ import numpy as np
 import msprime
 import pyslim
 import tskit
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +79,16 @@ initialize() {
     defineConstant("pop_names", $pop_names);
 
     _recombination_rates = $recombination_rates;
+    if (Q != 1) {
+        _recombination_rates = (1-(1-2*_recombination_rates)^Q)/2;
+    }
     _recombination_ends = $recombination_ends;
-    defineConstant("recombination_rates", (1-(1-2*_recombination_rates)^Q)/2);
+    defineConstant("recombination_rates", _recombination_rates);
     defineConstant("recombination_ends", _recombination_ends);
+    // whatever is in this dictionary will be saved out in the .trees file
+    defineConstant("metadata", Dictionary("Q", Q));
 """
+
 
 _slim_lower = """
     defineConstant("N", asInteger(_N/Q));
@@ -103,6 +110,10 @@ function (void)dbg(string$ s, [integer$ debug_level = 2]) {
         catn(sim.generation + ": " + s);
     }
 }
+"""
+
+
+_slim_functions = """
 
 // Check that sizes aren't dangerously low or zero (e.g. due to scaling).
 function (void)check_size(integer$ pop, integer$ size, integer$ g) {
@@ -146,10 +157,88 @@ function (integer)gdiff(numeric$ t0, numeric t1) {
 
 // Output tree sequence file and end the simulation.
 function (void)end(void) {
-    sim.treeSeqOutput(trees_file);
+    sim.treeSeqOutput(trees_file, metadata=metadata);
     sim.simulationFinished();
 }
 
+
+// Add `mut_type` mutation at `pos`, to a single individual in `pop`.
+function (void)add_mut(object$ mut_type, object$ pop, integer$ pos) {
+   targets = sample(pop.genomes, 1);
+   targets.addNewDrawnMutation(mut_type, pos);
+}
+
+// Return the allele frequency of a drawn mutation in the specified population.
+// Assumes there's only one mutation of the given type.
+function (float$)af(object$ mut_type, object$ pop) {
+    mut = sim.mutationsOfType(mut_type);
+    if (length(mut) == 0) {
+        return 0.0;
+    }
+    return sim.mutationFrequencies(pop, mut);
+}
+
+// Save the state of the simulation.
+function (void)save(void) {
+    if (sim.getValue("restore_function")) {
+        // Don't save if we're in the restore() function.
+        return;
+    }
+    n_saves = 1 + sim.getValue("n_saves");
+    sim.setValue("n_saves", n_saves);
+    dbg("save() "+n_saves);
+    sim.treeSeqOutput(trees_file, metadata=metadata);
+}
+
+// Restore the simulation state.
+function (void)restore(void) {
+    g_restore = sim.generation;
+    n_restores = 1 + sim.getValue("n_restores");
+    sim.setValue("n_restores", n_restores);
+    n_saves = sim.getValue("n_saves");
+    if (n_saves == 0) {
+        err("restore() in generation "+g_restore+", but nothing is saved.");
+    }
+    sim.readFromPopulationFile(trees_file);
+    dbg("restore() "+n_restores+" from generation "+g_restore+", returning "+
+        "to state at save() "+n_saves);
+
+    /*
+     * The generation counter sim.generation has now been reset to the
+     * value it had when save() was called. There are two issues relating
+     * to event scheduling which must now be dealt with.
+     *
+     * 1. There may be additional late events for the generation in which
+     * restore() was called, and they are still scheduled to run.
+     * So we deactivate all script blocks to avoid unexpected problems.
+     * They will be automatically reactivated at the start of the next
+     * generation (see SLiM manual section 23.10).
+     */
+    sim.scriptBlocks.active = F;
+
+    /*
+     * 2. The late events below were run in the save() generation,
+     * but after the save() call. We execute these again here, because
+     * the next late events to run will be for sim.generation + 1.
+     * Note that the save() event is indistinguishable from the other
+     * late events in this generation, so we set a flag `restore_function`
+     * to signal the save() function not to save again.
+     */
+    g = sim.generation;
+    sim.setValue("restore_function", T);
+    for (sb in sim.scriptBlocks) {
+        if (sb.type == "late" & g >= sb.start & g <= sb.end) {
+            self = sb;
+            executeLambda(sb.source);
+        }
+    }
+    sim.setValue("restore_function", F);
+}
+
+"""
+
+
+_slim_main = """
 1 {
     // save/restore bookkeeping
     sim.setValue("n_restores", 0);
@@ -164,8 +253,10 @@ function (void)end(void) {
     for (i in 0:(num_populations-1)) {
         if (N[0,i] > 0) {
             check_size(i, N[0,i], sim.generation);
-            dbg("sim.addSubpop("+i+", "+N[0,i]+");");
-            sim.addSubpop(i, N[0,i]);
+            dbg("p = sim.addSubpop("+i+", "+N[0,i]+");");
+            p = sim.addSubpop(i, N[0,i]);
+            dbg("p.name = '"+pop_names[i]+"';");
+            p.name = pop_names[i];
         }
     }
 
@@ -256,7 +347,8 @@ function (void)end(void) {
             check_size(newpop, size, g);
             sim.registerLateEvent(NULL,
                 "{dbg(self.source); " +
-                "sim.addSubpopSplit("+newpop+","+size+","+oldpop+");}",
+                "p = sim.addSubpopSplit("+newpop+","+size+","+oldpop+"); " +
+                "p.name = '"+pop_names[newpop]+"';}",
                 g, g);
         }
     }
@@ -338,8 +430,8 @@ function (void)end(void) {
     if (length(admixture_pulses) > 0 ) {
         for (i in 0:(ncol(admixture_pulses)-1)) {
             g = G_start + gdiff(T_start, admixture_pulses[0,i]);
-            dest = admixture_pulses[1,i];
-            src = admixture_pulses[2,i];
+            dest = asInteger(admixture_pulses[1,i]);
+            src = asInteger(admixture_pulses[2,i]);
             rate = admixture_pulses[3,i];
             sim.registerLateEvent(NULL,
                 "{dbg(self.source); " +
@@ -356,9 +448,9 @@ function (void)end(void) {
     if (length(drawn_mutations) > 0) {
         for (i in 0:(ncol(drawn_mutations)-1)) {
             g = G_start + gdiff(T_start, drawn_mutations[0,i]);
-            mut_type = drawn_mutations[1,i];
-            pop_id = drawn_mutations[2,i];
-            coordinate = drawn_mutations[3,i];
+            mut_type = asInteger(drawn_mutations[1,i]);
+            pop_id = asInteger(drawn_mutations[2,i]);
+            coordinate = asInteger(drawn_mutations[3,i]);
             sim.registerLateEvent(NULL,
                 "{dbg(self.source); " +
                 "add_mut(m"+mut_type+", p"+pop_id+", "+coordinate+");}",
@@ -431,145 +523,306 @@ function (void)end(void) {
     }
 }
 
-// Add `mut_type` mutation at `pos`, to a single individual in `pop`.
-function (void)add_mut(object$ mut_type, object$ pop, integer$ pos) {
-   targets = sample(pop.genomes, 1);
-   targets.addNewDrawnMutation(mut_type, pos);
+"""
+
+
+_slim_logfile = """
+// Optional logfile output:
+// Fitness values are only available in early(),
+// so logging happens in that stage.
+1 early () {
+    defineConstant("log", sim.createLogFile("$logfile", logInterval=NULL));
+    log.addGeneration();
+    for (pop in sim.subpopulations.id) {
+        log.addMeanSDColumns(
+            "fitness_p" + pop,
+            "p" + pop + ".cachedFitness(NULL);"
+        );
+    }
 }
 
-// Return the allele frequency of a drawn mutation in the specified population.
-// Assumes there's only one mutation of the given type.
-function (float$)af(object$ mut_type, object$ pop) {
-    mut = sim.mutationsOfType(mut_type);
-    if (length(mut) == 0) {
-        return 0.0;
+1: early() {
+    if (sim.generation % $loginterval == 1)
+        log.logRow();
+}
+"""
+
+
+_slim_debug_output = """
+
+///
+/// Debugging output
+///
+
+// Print out selection coefficients for every new mutation:
+// this is for development purposes, and the format of this output
+// is subject to change or may even be removed!
+// Header:
+1 late() {
+    if (verbosity >= 3) {
+        dbg(paste(c("dbg_selection_coeff:",
+                    "selectionCoeff",
+                    "id",
+                    "position"),
+                  sep="\t"));
     }
-    return sim.mutationFrequencies(pop, mut);
 }
 
-// Save the state of the simulation.
-function (void)save(void) {
-    if (sim.getValue("restore_function")) {
-        // Don't save if we're in the restore() function.
-        return;
-    }
-    n_saves = 1 + sim.getValue("n_saves");
-    sim.setValue("n_saves", n_saves);
-    dbg("save() "+n_saves);
-    sim.treeSeqOutput(trees_file);
-}
-
-// Restore the simulation state.
-function (void)restore(void) {
-    g_restore = sim.generation;
-    n_restores = 1 + sim.getValue("n_restores");
-    sim.setValue("n_restores", n_restores);
-    n_saves = sim.getValue("n_saves");
-    if (n_saves == 0) {
-        err("restore() in generation "+g_restore+", but nothing is saved.");
-    }
-    sim.readFromPopulationFile(trees_file);
-    dbg("restore() "+n_restores+" from generation "+g_restore+", returning "+
-        "to state at save() "+n_saves);
-
-    /*
-     * The generation counter sim.generation has now been reset to the
-     * value it had when save() was called. There are two issues relating
-     * to event scheduling which must now be dealt with.
-     *
-     * 1. There may be additional late events for the generation in which
-     * restore() was called, and they are still scheduled to run.
-     * So we deactivate all script blocks to avoid unexpected problems.
-     * They will be automatically reactivated at the start of the next
-     * generation (see SLiM manual section 23.10).
-     */
-    sim.scriptBlocks.active = F;
-
-    /*
-     * 2. The late events below were run in the save() generation,
-     * but after the save() call. We execute these again here, because
-     * the next late events to run will be for sim.generation + 1.
-     * Note that the save() event is indistinguishable from the other
-     * late events in this generation, so we set a flag `restore_function`
-     * to signal the save() function not to save again.
-     */
-    g = sim.generation;
-    sim.setValue("restore_function", T);
-    for (sb in sim.scriptBlocks) {
-        if (sb.type == "late" & g >= sb.start & g <= sb.end) {
-            self = sb;
-            executeLambda(sb.source);
+// Content:
+1: late() {
+    // Print out selection coefficients for every new mutation:
+    // this is for development purposes, and the format of this output
+    // is subject to change or may even be removed!
+    if (verbosity >= 3) {
+        new = (sim.mutations.originGeneration == sim.generation);
+        for (mut in sim.mutations[new]) {
+            dbg(paste(c("dbg_selection_coeff:",
+                        mut.selectionCoeff,
+                        mut.id,
+                        mut.position),
+                      sep="\t"));
         }
     }
-    sim.setValue("restore_function", F);
+}
+
+// Save genomic element type information in tree sequence metadata
+// This is for development purposes, and the format of this metadata
+// is subject to change or may even be removed!
+1 {
+    if (verbosity >= 3) {
+        // recombination map
+        metadata.setValue(
+            "recombination_rates",
+            sim.chromosome.recombinationRates
+        );
+        metadata.setValue(
+            "recombination_ends",
+            sim.chromosome.recombinationEndPositions
+        );
+        // mutationTypes
+        muts = Dictionary();
+        for (mt in sim.mutationTypes) {
+            mut_info = Dictionary(
+                "distributionParams", mt.distributionParams,
+                "distributionType", mt.distributionType,
+                "dominanceCoeff", mt.dominanceCoeff
+            );
+            muts.setValue(asString(mt.id), mut_info);
+        }
+        metadata.setValue("mutationTypes", muts);
+        // genomicElementTypes
+        ge_starts = sim.chromosome.genomicElements.startPosition;
+        ge_ends= sim.chromosome.genomicElements.endPosition;
+        ge_types= sim.chromosome.genomicElements.genomicElementType.id;
+        ges = Dictionary();
+        for (gt in sim.genomicElementTypes) {
+            gt_info = Dictionary(
+                "mutationTypes", gt.mutationTypes.id,
+                "mutationFractions", gt.mutationFractions,
+                "intervalStarts", ge_starts[ge_types == gt.id],
+                "intervalEnds", ge_ends[ge_types == gt.id]
+            );
+            ges.setValue(asString(gt.id), gt_info);
+        }
+        metadata.setValue("genomicElementTypes", ges);
+        // mutation rates
+        mr = Dictionary(
+            "rates", sim.chromosome.mutationRates,
+            "ends", sim.chromosome.mutationEndPositions
+        );
+        metadata.setValue("mutationRates", mr);
+    }
 }
 
 """
+
+_raw_stdpopsim_top_level_schema = {
+    "stdpopsim": {
+        "description": "Top-level metadata for a tree sequence produced by stdposim using the SLiM engine",  # noqa: E501
+        "type": "object",
+        "properties": {
+            "DFEs": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "description": {"type": "string"},
+                        "long_description": {"type": "string"},
+                        "mutation_types": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "dominance_coeff": {"type": "number"},
+                                    "distribution_type": {"type": "string"},
+                                    "distribution_args": {
+                                        "type": "array",
+                                        "items": {"type": ["number", "string"]},
+                                    },
+                                    "convert_to_substitution": {"type": "boolean"},
+                                    "Q_scaled_index": {
+                                        "type": "array",
+                                        "items": {"type": "number"},
+                                    },
+                                    "slim_mutation_type_id": {"type": "integer"},
+                                    "is_neutral": {"type": "boolean"},
+                                },
+                            },
+                        },
+                        "proportions": {"type": "array", "items": {"type": "number"}},
+                        "citations": {
+                            "type": "array",
+                            "items": {"type": ["string", "object"]},
+                        },
+                        "intervals": {
+                            "type": "array",
+                            "items": {"type": "array", "minItems": 2, "maxItems": 2},
+                        },
+                        "start_time": {"type": "number"},
+                        "end_time": {"type": "number"},
+                    },
+                },
+            }
+        },
+    }
+}
+
+
+def get_slim_mutation_rate_map(contig):
+    """
+    Returns a tuple with the breakpoints and rates of mutations for SLiM.
+    """
+    breaks, dfe_labels = contig.dfe_breakpoints()  # beware -1 labels
+    slim_fractions = np.array(
+        [
+            sum(
+                [
+                    p
+                    for p, mt in zip(d.proportions, d.mutation_types)
+                    if (not mt.is_neutral)
+                ]
+            )
+            for d in contig.dfe_list
+        ]
+        + [0]
+    )  # append 0 for the -1 labels
+    slim_rates = contig.mutation_rate * slim_fractions[dfe_labels]
+    slim_breaks = breaks[1:] - 1  # SLiM has inclusive right endpoints
+    return (slim_breaks, slim_rates)
+
+
+def slim_array_string(iterable, indent, width=80):
+    """
+    Format an array as a SLiM c() array and return as a line-wrapped string.
+    """
+    return (
+        "c(\n"
+        + textwrap.fill(
+            ", ".join(map(str, iterable)),
+            width=width,
+            initial_indent=indent,
+            subsequent_indent=indent,
+        )
+        + ")"
+    )
+
+
+def _enum_dfe_and_intervals(contig):
+    """
+    Returns an iterator which, for every `DFE` in the `contig`, returns a tuple
+    containing a numeric id for said DFE, the DFE object and the list of
+    intervals associated with the DFE. We need to assign each DFE a numeric id
+    both in the slim_makescript and in the _add_dfes_to_metadata, so with this
+    function we can ensure these two steps assigns numeric ids to the DFEs in the
+    same way.
+    """
+    assert len(contig.dfe_list) == len(contig.interval_list)
+    for i, (d, ints) in enumerate(zip(contig.dfe_list, contig.interval_list)):
+        yield i, d, ints
+
+
+def _dfe_to_mtypes(contig):
+    """
+    Assigns a mutation type id to each of the mutation types contained in this
+    `Contig`. This function will return a dictionary with `len(contig.dfe_list)`
+    elements, in which the position of the DFE in `contig.dfe_list` is the key.
+    For each DFE, the dictionary holds a list of tuples that contain the an
+    assigned mutation type id (used in  SLiM) and the `MutationType` object.
+    This is necessary so that we use the same numeric ids to the mutation types
+    in the _add_dfes_to_metadata and slim_makescript steps.
+    """
+    mid = 0
+    dfe_to_mtypes = {}
+    for i, d, _ in _enum_dfe_and_intervals(contig):
+        dfe_to_mtypes[i] = []
+        for mt in d.mutation_types:
+            dfe_to_mtypes[i].append((mid, mt))
+            mid += 1
+    return dfe_to_mtypes
+
+
+def _add_dfes_to_metadata(ts, contig):
+    """
+    Adds the DFEs to the top-level metadata of a tree sequence using
+    information in the `contig`.
+    """
+
+    def _get_json(obj):
+        # recursively flattens an object to a dictionary.
+        return json.loads(
+            json.dumps(obj, default=lambda o: getattr(o, "__dict__", str(o)))
+        )
+
+    tables = ts.dump_tables()
+    schema = tables.metadata_schema.asdict()
+    metadata = tables.metadata
+    schema["properties"].update(_raw_stdpopsim_top_level_schema)
+    dfes = _get_json(contig.dfe_list)
+    dfe_to_mtypes = _dfe_to_mtypes(contig)
+    for i, d, ints in _enum_dfe_and_intervals(contig):
+        dfes[i]["intervals"] = ints.tolist()
+        dfes[i]["proportions"] = d.proportions
+        for j, (mid, mt) in enumerate(dfe_to_mtypes[i]):
+            add = {
+                "slim_mutation_type_id": mid,
+                "is_neutral": mt.is_neutral,
+            }
+            dfes[i]["mutation_types"][j].update(add)
+    new_metadata = {"stdpopsim": {"DFEs": dfes}}
+    metadata.update(new_metadata)
+    tables.metadata_schema = tskit.MetadataSchema(schema)
+    tables.metadata = metadata
+    return tables.tree_sequence()
 
 
 def msprime_rm_to_slim_rm(recombination_map):
     """
     Convert recombination map from start position coords to end position coords.
+
+    In SLiM, if ends[j-1] = a and ends[j] = b, then the recombination rate rates[j]
+    applies to the links between a and b, i.e., to the links a:(a+1), (a+1):(a+2),
+    ... (b-1):b. The tree sequence output by a SLiM simulation with L loci
+    (i.e., positions 0, ..., L-1) will have sequence length equal to L, because
+    intervals in tskit are open on the right, so the interval [0, L) does not
+    include L.
+
+    On the other hand, in msprime, a recombination rate map with some rate
+    applied to the interval [x, y) will allow recombination events to the
+    integers falling in [x, y); an event occuring at x will split x-1 from x,
+    and so this implies recombination for the links from
+    (x-1):x, x:(x+1), ..., (y-2):(y-1); this would correspond to ends of x-1
+    and y-1 in SLiM.
+
+    Note that this implies that the recombination rate that a msprime RateMap
+    assigns to the interval [0, 1) has no effect in a discrete msprime
+    simulation.
     """
     rates = recombination_map.rate.copy()
     # replace missing values with 0 recombination rate
     rates[recombination_map.missing] = 0
     ends = [int(pos) - 1 for pos in recombination_map.position]
     return rates, ends[1:]
-
-
-def get_slim_fractions(contig):
-    return np.array([sum(g.proportions) for g in contig.genomic_element_types])
-
-
-def compute_msp_mutation_rate_map(contig, slim_fractions):
-    """
-    breaks = [0,10,20] means [0,10) and [10,20)
-    """
-    length = contig.recombination_map.sequence_length
-    breaks = [0]
-    rates = []
-    for (start, end, t) in contig.all_intervals_array:
-        if start not in breaks:
-            breaks.append(start)
-            rates.append(contig.mutation_rate)
-        breaks.append(end)
-        rates.append(
-            np.around((1 - slim_fractions[t]) * contig.mutation_rate, decimals=16)
-        )
-    if not np.isclose(breaks[-1], int(length)):
-        breaks.append(int(length))
-        rates.append(contig.mutation_rate)
-    assert len(breaks) == len(rates) + 1
-    return msprime.RateMap(position=breaks, rate=rates)
-
-
-def compute_slim_mutation_breaks_and_rates(contig, msp_mutation_rate_map):
-    """
-    breaks = [10,20] means [0,10] and (10,20]
-    """
-    # making sure the mut types are still concordant with the ge types
-    breaks = msp_mutation_rate_map.position
-    rates = msp_mutation_rate_map.rate
-    assert breaks[0] == 0
-    slim_breaks = [b - 1 for b in breaks[1:]]
-    slim_rates = [contig.mutation_rate - r for r in rates]
-    return (slim_breaks, slim_rates)
-
-
-def get_msp_and_slim_mutation_rate_maps(contig):
-    """
-    Returns a :class:`msprime.RateMap` with the mutation rate map for overlay
-    of neutral mutations and a tuple with the breakpoints and rates of mutations
-    for SLiM.
-    """
-    slim_fractions = get_slim_fractions(contig)
-    msp_mutation_rate_map = compute_msp_mutation_rate_map(contig, slim_fractions)
-
-    slim_breaks, slim_rates = compute_slim_mutation_breaks_and_rates(
-        contig, msp_mutation_rate_map
-    )
-    return (msp_mutation_rate_map, (slim_breaks, slim_rates))
 
 
 def slim_makescript(
@@ -582,8 +835,10 @@ def slim_makescript(
     scaling_factor,
     burn_in,
     slim_rate_map,
+    logfile=None,
+    logfile_interval=1,
 ):
-    mutation_types = contig.mutation_types
+
     pop_names = [pop.name for pop in demographic_model.model.populations]
     # Use copies of these so that the time frobbing below doesn't have
     # side-effects in the caller's model.
@@ -692,14 +947,17 @@ def slim_makescript(
     fitness_callbacks = []
     condition_on_allele_frequency = []
     op_id = stdpopsim.ext.ConditionOnAlleleFrequency.op_id
+    slim_mutation_ids = []
+    for x in _dfe_to_mtypes(contig).values():
+        slim_mutation_ids.extend([u[0] for u in x])
     for ee in extended_events:
         if hasattr(ee, "mutation_type_id"):
             mt_id = getattr(ee, "mutation_type_id")
             cls_name = ee.__class__.__name__
-            if not (0 <= mt_id < len(mutation_types)):
+            if mt_id not in slim_mutation_ids:
                 raise ValueError(
-                    f"Invalid {cls_name} {ee.mutation_type_id} {len(mutation_types)} "
-                    f"event with mutation type id {mt_id}.{contig}"
+                    f"Invalid {cls_name} event with mutation type id "
+                    f"{mt_id} on {contig} with valid IDs {slim_mutation_ids}."
                 )
         if hasattr(ee, "start_time") and hasattr(ee, "end_time"):
             # Now that GenerationAfter times have been accounted for, we can
@@ -778,26 +1036,8 @@ def slim_makescript(
 
     recomb_rates, recomb_ends = msprime_rm_to_slim_rm(contig.recombination_map)
     indent = 8 * " "
-    recomb_rates_str = (
-        "c(\n"
-        + textwrap.fill(
-            ", ".join(map(str, recomb_rates)),
-            width=80,
-            initial_indent=indent,
-            subsequent_indent=indent,
-        )
-        + ")"
-    )
-    recomb_ends_str = (
-        "c(\n"
-        + textwrap.fill(
-            ", ".join(map(str, recomb_ends)),
-            width=80,
-            initial_indent=indent,
-            subsequent_indent=indent,
-        )
-        + ")"
-    )
+    recomb_rates_str = slim_array_string(recomb_rates, indent)
+    recomb_ends_str = slim_array_string(recomb_ends, indent)
 
     pop_names_str = ", ".join(map(lambda x: f'"{x}"', pop_names))
 
@@ -848,37 +1088,64 @@ def slim_makescript(
 
         return "".join(s)
 
-    # Mutation types.
-    for i, m in enumerate(mutation_types):
-        distrib_args = [str(arg) for arg in m.distribution_args]
-        distrib_args[m.Q_scaled_index] = "Q * " + distrib_args[m.Q_scaled_index]
-        distrib_args = ", ".join(distrib_args)
-        printsc(
-            f"    initializeMutationType({i}, {m.dominance_coeff}, "
-            + f'"{m.distribution_type}", {distrib_args});'
-        )
-        if not m.convert_to_substitution:
-            # T is the default for WF simulations.
-            printsc(f"    m{i}.convertToSubstitution = F;")
     # Genomic element types.
-    genomic_element_types = contig.genomic_element_types
-    for j, g in enumerate(genomic_element_types):
-        mut_props = ", ".join([str(prop) for prop in g.proportions])
-        mut_types = ", ".join([str(mid) for mid in g.mutation_type_ids])
-        element_starts = np.array2string(g.intervals[:, 0], separator=", ")[1:-1]
-        # stdpopsim intervals are 0-based left inclusive, right exclusive, but
-        # SLiM intervals are right inclusive
-        element_ends = np.array2string((g.intervals[:, 1] - 1), separator=", ")[1:-1]
+    dfe_mtypes = _dfe_to_mtypes(contig)
+    for j, d, ints in _enum_dfe_and_intervals(contig):
+        # Mutation types.
+        mut_type_list = []
+        assert len(dfe_mtypes[j]) == len(d.mutation_types)
+        for mid, m in dfe_mtypes[j]:
+            if len(m.Q_scaled_index) >= 1:
+                distrib_args = [str(arg) for arg in m.distribution_args]
+                for k in m.Q_scaled_index:
+                    distrib_args[m.Q_scaled_index[k]] = (
+                        "Q * " + distrib_args[m.Q_scaled_index[k]]
+                    )
+                distrib_args = ", ".join(distrib_args)
+            # dealing with distributions given by "s" Eidos script,
+            else:
+                distrib_args = "; ".join([f'"{a}"' for a in m.distribution_args])
+            mut_type_list.append(mid)
+            printsc(
+                f"    initializeMutationType({mid}, {m.dominance_coeff}, "
+                f'"{m.distribution_type}", {distrib_args});'
+            )
+            if not m.convert_to_substitution:
+                # T is the default for WF simulations.
+                printsc(f"    m{mid}.convertToSubstitution = F;")
+        mut_types = ", ".join([str(mt) for mt in mut_type_list])
+        # We will assign a proportion of 0.0 to mutation types that are neutral
+        # unless all the mutation types in a DFE are neutral. In such case,
+        # SLiM would not allow all mutation types in a genomic element type to
+        # have 0.0 proportion. And the proportions in SLiM won't matter anyway,
+        # because all the intervals in this fully neutral DFE will have 0.0
+        # mutation rate anyway.
+        mut_props_list = [
+            prop if (not mt.is_neutral) or d.is_neutral else 0.0
+            for prop, mt in zip(d.proportions, d.mutation_types)
+        ]
+        mut_props = ", ".join(map(str, mut_props_list))
         printsc(
             f"    initializeGenomicElementType({j}, c({mut_types}), c({mut_props}));"
         )
-        printsc(
-            f"    initializeGenomicElement({j}, c({element_starts}), c({element_ends}));"
-        )
+        if d.is_neutral:
+            printsc(
+                f"    // Note: genomic element type {j} is entirely neutral,"
+                " so will not be simulated by SLiM."
+            )
+        if ints.shape[0] > 0:
+            element_starts = slim_array_string(ints[:, 0], indent)
+            # stdpopsim intervals are 0-based left inclusive, right exclusive, but
+            # SLiM intervals are right inclusive
+            element_ends = slim_array_string(ints[:, 1] - 1, indent)
+            printsc(
+                f"    initializeGenomicElement({j}, {element_starts}, {element_ends});"
+            )
     # Mutation rate map.
-    mut_breaks = ", ".join([str(int(b)) for b in slim_rate_map[0]])
-    mut_rates = ", ".join([str(r) for r in slim_rate_map[1]])
-    printsc(f"    initializeMutationRate(c({mut_rates})*Q, c({mut_breaks}));")
+    mut_breaks = slim_array_string(map(int, slim_rate_map[0]), indent)
+    mut_rates = slim_array_string(slim_rate_map[1], indent)
+    printsc(f"    initializeMutationRate(Q*{mut_rates}, {mut_breaks});")
+    printsc()
 
     # Epoch times.
     printsc("    // Time of epoch boundaries, in years before present.")
@@ -1041,6 +1308,16 @@ def slim_makescript(
     )
 
     printsc(_slim_lower)
+    printsc(_slim_functions)
+    printsc(_slim_main)
+    if logfile is not None:
+        printsc(
+            string.Template(_slim_logfile).substitute(
+                logfile=logfile,
+                loginterval=logfile_interval,
+            )
+        )
+    printsc(_slim_debug_output)
 
     return epochs[0]
 
@@ -1094,6 +1371,10 @@ class _SLiMEngine(stdpopsim.Engine):
         slim_scaling_factor=1.0,
         slim_burn_in=10.0,
         dry_run=False,
+        verbosity=None,
+        logfile=None,
+        logfile_interval=100,
+        _recap_and_rescale=True,
     ):
         """
         Simulate the demographic model using SLiM.
@@ -1121,12 +1402,18 @@ class _SLiMEngine(stdpopsim.Engine):
         :param dry_run: If True, run the first generation setup and then end the
             simulation.
         :type dry_run: bool
+        :param logfile: Name of file to write a log of summary statistics
+            (currently, only mean and SD of fitness values per population).
+            Defaults to None, meaning "do not log".
+        :param logfile_interval: How often to write to the log file, in generations.
         """
 
         if slim_scaling_factor <= 0:
             raise ValueError("slim_scaling_factor must be positive")
         if slim_burn_in < 0:
             raise ValueError("slim_burn_in must be non-negative")
+        if len(contig.dfe_list) == 0:
+            raise ValueError("SLiM requires at least one DFE.")
 
         if slim_scaling_factor != 1:
             warnings.warn(
@@ -1138,18 +1425,10 @@ class _SLiMEngine(stdpopsim.Engine):
                     "compare results across different values of the scaling factor."
                 )
             )
-        if contig.recombination_map is None:
-            raise ValueError(
-                "Your Contig object is not compatible with the SLiM "
-                "engine. You must specify a recombination map."
-            )
-        # if no GET were defined, fully neutral sim with overlay of muts using msprime
-        if len(contig.genomic_element_types) == 0:
-            contig.fully_neutral()
 
         # figuring out mutations in SLiM and neutral mutations to be added
         # by msprime later
-        msp_rate_map, slim_rate_map = get_msp_and_slim_mutation_rate_maps(contig)
+        slim_rate_map = get_slim_mutation_rate_map(contig)
 
         # TODO: remove this after a release or two. See #745.
         self._warn_zigzag(demographic_model)
@@ -1179,6 +1458,8 @@ class _SLiMEngine(stdpopsim.Engine):
                 slim_scaling_factor,
                 slim_burn_in,
                 slim_rate_map,
+                logfile=logfile,
+                logfile_interval=logfile_interval,
             )
 
             script_file.flush()
@@ -1187,7 +1468,11 @@ class _SLiMEngine(stdpopsim.Engine):
                 return None
 
             self._run_slim(
-                script_file.name, slim_path=slim_path, seed=seed, dry_run=dry_run
+                script_file.name,
+                slim_path=slim_path,
+                seed=seed,
+                dry_run=dry_run,
+                verbosity=verbosity,
             )
 
             if dry_run:
@@ -1195,9 +1480,11 @@ class _SLiMEngine(stdpopsim.Engine):
 
             ts = tskit.load(ts_file.name)
 
-        ts = self._recap_and_rescale(
-            ts, seed, recap_epoch, contig, slim_scaling_factor, msp_rate_map
-        )
+        ts = _add_dfes_to_metadata(ts, contig)
+        if _recap_and_rescale:
+            ts = self._recap_and_rescale(
+                ts, seed, recap_epoch, contig, slim_scaling_factor
+            )
 
         if contig.inclusion_mask is not None:
             ts = stdpopsim.utils.mask_tree_sequence(ts, contig.inclusion_mask, False)
@@ -1206,7 +1493,9 @@ class _SLiMEngine(stdpopsim.Engine):
 
         return ts
 
-    def _run_slim(self, script_file, slim_path=None, seed=None, dry_run=False):
+    def _run_slim(
+        self, script_file, slim_path=None, seed=None, dry_run=False, verbosity=None
+    ):
         """
         Run SLiM.
 
@@ -1231,6 +1520,8 @@ class _SLiMEngine(stdpopsim.Engine):
             slim_cmd.extend(["-s", f"{seed}"])
         if dry_run:
             slim_cmd.extend(["-d", "dry_run=T"])
+        if verbosity is not None:
+            slim_cmd.extend(["-d", f"verbosity={verbosity}"])
         slim_cmd.append(script_file)
 
         with subprocess.Popen(
@@ -1271,30 +1562,54 @@ class _SLiMEngine(stdpopsim.Engine):
         )
         return ts.simplify(samples=list(nodes), filter_populations=False)
 
-    def _recap_and_rescale(
-        self, ts, seed, recap_epoch, contig, slim_scaling_factor, msp_rate_map
-    ):
+    def _recap_and_rescale(self, ts, seed, recap_epoch, contig, slim_scaling_factor):
         """
         Apply post-SLiM transformations to ``ts``. This rescales node times,
         does recapitation, simplification, and adds neutral mutations.
         """
-        # Node times come from SLiM generation numbers, which may have been
+        # Times come from SLiM generation numbers, which may have been
         # divided by a scaling factor for computational tractability.
         tables = ts.dump_tables()
         for table in (tables.nodes, tables.migrations, tables.mutations):
             table.time *= slim_scaling_factor
-        ts_metadata = tables.metadata
-        ts_metadata["SLiM"]["generation"] *= slim_scaling_factor
-        tables.metadata = ts_metadata
+        metadata = tables.metadata
+        metadata["SLiM"]["generation"] *= slim_scaling_factor
+        # Finding what slim id to use in recap DFE
+        max_id = -1
+        for dfe in metadata["stdpopsim"]["DFEs"]:
+            for mt in dfe["mutation_types"]:
+                max_id = max(mt["slim_mutation_type_id"], max_id)
+        recap_dfe = {
+            "id": "recapitation",
+            "description": "DFE used in recapitation",
+            "long_description": "neutral mutations added with msprime.sim_mutations "
+            "to the recapited portion of the tree sequence",
+            "mutation_types": [
+                {
+                    "dominance_coeff": 0.5,
+                    "distribution_type": "f",
+                    "distribution_args": [0],
+                    "convert_to_substitution": False,
+                    "Q_scaled_index": [0],
+                    "slim_mutation_type_id": max_id + 1,
+                    "is_neutral": True,
+                }
+            ],
+            "proportions": [1.0],
+            "citations": [],
+            "intervals": [[0, ts.sequence_length]],
+        }
+        metadata["stdpopsim"]["DFEs"].append(recap_dfe)
+        tables.metadata = metadata
         ts = tables.tree_sequence()
-        slim_gen = ts.metadata["SLiM"]["generation"]
 
         rng = random.Random(seed)
-        s1, s2 = rng.randrange(1, 2 ** 32), rng.randrange(1, 2 ** 32)
-
+        s0 = rng.randrange(1, 2**32)
         population_configurations = [
             msprime.PopulationConfiguration(
-                initial_size=pop.start_size, growth_rate=pop.growth_rate
+                initial_size=pop.start_size,
+                growth_rate=pop.growth_rate,
+                metadata={"name": pop.name},
             )
             for pop in recap_epoch.populations
         ]
@@ -1304,48 +1619,62 @@ class _SLiMEngine(stdpopsim.Engine):
             migration_matrix=recap_epoch.migration_matrix,
         )
 
-        # TODO: using recombination map in recapitate. maps should be discrete.
         ts = msprime.sim_ancestry(
             initial_state=ts,
             demography=demography,
-            recombination_rate=contig.recombination_map.mean_rate,
-            random_seed=s1,
+            recombination_rate=contig.recombination_map,
+            random_seed=s0,
         )
-
         ts = self._simplify_remembered(ts)
 
-        # Figuring out SLiM mutation id metadata
-        max_id = -1
-        for mut in ts.mutations():
-            for d in mut.derived_state.split(","):
-                max_id = max(max_id, int(d))
+        # Adding neutral mutations to simulation and recapitation periods
+        breaks, dfe_labels = contig.dfe_breakpoints()  # beware -1 labels
+        for i, dfe in enumerate(ts.metadata["stdpopsim"]["DFEs"]):
+            assert len(dfe["proportions"]) == len(dfe["mutation_types"])
+            for prop, mt in zip(dfe["proportions"], dfe["mutation_types"]):
+                if mt["is_neutral"]:
+                    mut_seed = rng.randrange(1, 2**32)
+                    # Figuring out SLiM mutation id metadata
 
-        # Creating a SLiM mutation model
-        model = msprime.SLiMMutationModel(
-            type=len(contig.mutation_types), next_id=max_id + 1
-        )
+                    def _get_next_id(ts):
+                        max_id = -1
+                        for mut in ts.mutations():
+                            for d in mut.derived_state.split(","):
+                                max_id = max(max_id, int(d))
+                        return max_id + 1
 
-        # Add mutations to recapitated part of trees.
-        ts = msprime.sim_mutations(
-            ts,
-            rate=contig.mutation_rate,
-            model=model,
-            start_time=slim_gen,
-            keep=True,
-            random_seed=s2,
-        )
+                    def _get_msp_rate_map(breaks, is_this_dfe, rate):
+                        rates = np.zeros(shape=is_this_dfe.shape)
+                        rates[is_this_dfe] = rate
+                        return msprime.RateMap(position=breaks, rate=rates)
 
-        # Adding neutral mutations to the SLiM part
-        s3 = rng.randrange(1, 2 ** 32)
-        ts = msprime.sim_mutations(
-            ts,
-            rate=msp_rate_map,
-            model=model,
-            end_time=slim_gen,
-            keep=True,
-            random_seed=s3,
-        )
-
+                    # Add mutations to recapitated part of trees.
+                    model = msprime.SLiMMutationModel(
+                        type=mt["slim_mutation_type_id"], next_id=_get_next_id(ts)
+                    )
+                    start_time = None
+                    end_time = None
+                    if dfe["id"] == "recapitation":
+                        start_time = metadata["SLiM"]["generation"]
+                        msp_rate_map = _get_msp_rate_map(
+                            np.array([0, contig.length]),
+                            np.array([True]),
+                            contig.mutation_rate,
+                        )
+                    else:
+                        msp_rate_map = _get_msp_rate_map(
+                            breaks, dfe_labels == i, prop * contig.mutation_rate
+                        )
+                        end_time = metadata["SLiM"]["generation"]
+                    ts = msprime.sim_mutations(
+                        ts,
+                        rate=msp_rate_map,
+                        model=model,
+                        start_time=start_time,
+                        end_time=end_time,
+                        keep=True,
+                        random_seed=mut_seed,
+                    )
         return ts
 
     def recap_and_rescale(
@@ -1382,15 +1711,7 @@ class _SLiMEngine(stdpopsim.Engine):
             should be consulted to determine if the behaviour is appropriate
             for your case.
         """
-        if contig.recombination_map is None:
-            raise ValueError(
-                "Your Contig object is not compatible with the SLiM "
-                "engine. You must specify a recombination map."
-            )
-        # if no GET were defined, fully neutral sim with overlay of muts using msprime
-        if len(contig.genomic_element_types) == 0:
-            contig.fully_neutral()
-        msp_rate_map, slim_rate_map = get_msp_and_slim_mutation_rate_maps(contig)
+        slim_rate_map = get_slim_mutation_rate_map(contig)
 
         with open(os.devnull, "w") as script_file:
             recap_epoch = slim_makescript(
@@ -1405,9 +1726,7 @@ class _SLiMEngine(stdpopsim.Engine):
                 slim_rate_map,
             )
 
-        ts = self._recap_and_rescale(
-            ts, seed, recap_epoch, contig, slim_scaling_factor, msp_rate_map
-        )
+        ts = self._recap_and_rescale(ts, seed, recap_epoch, contig, slim_scaling_factor)
         return ts
 
 

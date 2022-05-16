@@ -1114,14 +1114,14 @@ def GladsteinAshkSubstructure():
 
     # Population sizes from supp tab 3
     N_ANC = 7300
-    N_YRI = 10 ** 4.26
-    N_CEU = 10 ** 4.52
-    N_CHB = 10 ** 3.61
-    N_WA = 10 ** 3.82
-    N_EA = 10 ** 6.29
-    N_Ag = 10 ** 3.04
-    N_J = 10 ** 5.55
-    N_M = 10 ** 5.64
+    N_YRI = 10**4.26
+    N_CEU = 10**4.52
+    N_CHB = 10**3.61
+    N_WA = 10**3.82
+    N_EA = 10**6.29
+    N_Ag = 10**3.04
+    N_J = 10**5.55
+    N_M = 10**5.64
 
     # Migration rate from CEU to ASHK ancestral pop
     m = 0.17
@@ -1256,3 +1256,138 @@ def ZigZag():
 
 
 _species.get_demographic_model("Zigzag_1S14").register_qc(ZigZag())
+
+
+def JouganousOOA2017():
+    """
+    Four population OOA model from Jouganous et al. 2017, fit to the
+    SFS using moments. The populations are YRI, CEU, CHB, and JPT.
+    The model is shown in Figure 3 and the parameters are taken from
+    table 4.
+    The model includes population splits, directional migration and
+    exponential growth in the various populations. The model was fit
+    using data from 20 samples from each population and assumes a
+    mutation rate of 1.44e-8 per generation and a generation time
+    of 29 years.
+    """
+    id = "QC-OutOfAfrica_4J17"
+
+    N_A = 11293
+    N_AF = 23721
+    N_B = 2831
+    N_EU0 = 2512
+    r_EU = 0.0016
+    N_AS0 = 1019
+    r_AS = 0.0026
+    N_JP0 = 4384
+    r_JP = 0.0129
+    m_AF_B = 16.8e-5
+    m_AF_EU = 1.14e-5
+    m_AF_AS = 0.56e-5
+    m_EU_AS = 4.75e-5
+    m_CH_JP = 3.3e-5
+    T_AF_y = 357e3
+    T_AF_g = int(T_AF_y / 29)
+    T_B_y = 119e3
+    T_B_g = int(T_B_y / 29)
+    T_EU_AS_y = 46e3
+    T_EU_AS_g = int(T_EU_AS_y / 29)
+    T_CH_JP_y = 9e3
+    T_CH_JP_g = int(T_CH_JP_y / 29)
+
+    N_curr_CEU = N_EU0 * math.exp(T_EU_AS_g * r_EU)
+    N_curr_CHB = N_AS0 * math.exp(T_EU_AS_g * r_AS)
+    N_curr_JPT = N_JP0 * math.exp(T_CH_JP_g * r_JP)
+
+    de = msprime.Demography()
+    de.add_population(name="YRI", initial_size=N_AF, initially_active=True)
+    de.add_population(
+        name="CEU", initial_size=N_curr_CEU, growth_rate=r_EU, initially_active=True
+    )
+    de.add_population(
+        name="CHB", initial_size=N_curr_CHB, growth_rate=r_AS, initially_active=True
+    )
+    de.add_population(
+        name="JPT", initial_size=N_curr_JPT, growth_rate=r_JP, initially_active=True
+    )
+
+    de.set_symmetric_migration_rate(["YRI", "CEU"], m_AF_EU)
+    de.set_symmetric_migration_rate(["YRI", "CHB"], m_AF_AS)
+    de.set_symmetric_migration_rate(["CEU", "CHB"], m_EU_AS)
+    de.set_symmetric_migration_rate(["CHB", "JPT"], m_CH_JP)
+
+    de.add_mass_migration(time=T_CH_JP_g, source="JPT", dest="CHB", proportion=1)
+    de.add_symmetric_migration_rate_change(
+        time=T_CH_JP_g, populations=["CHB", "JPT"], rate=0
+    )
+    de.add_mass_migration(time=T_EU_AS_g, source="CHB", dest="CEU", proportion=1)
+    de.add_symmetric_migration_rate_change(
+        time=T_EU_AS_g, populations=["CEU", "CHB"], rate=0
+    )
+    de.add_symmetric_migration_rate_change(
+        time=T_EU_AS_g, populations=["YRI", "CHB"], rate=0
+    )
+
+    de.add_population_parameters_change(
+        time=T_EU_AS_g, initial_size=N_B, growth_rate=0, population="CEU"
+    )
+    de.add_symmetric_migration_rate_change(
+        time=T_EU_AS_g, populations=["CEU", "YRI"], rate=m_AF_B
+    )
+    de.add_mass_migration(time=T_B_g, source="CEU", dest="YRI", proportion=1)
+    de.add_symmetric_migration_rate_change(
+        time=T_B_g, populations=["CEU", "YRI"], rate=0
+    )
+    de.add_population_parameters_change(time=T_AF_g, initial_size=N_A, population="YRI")
+
+    return stdpopsim.DemographicModel(
+        id=id,
+        description=id,
+        long_description=id,
+        generation_time=29,
+        model=de,
+        mutation_rate=1.44e-8,
+        population_id_map=None,
+    )
+
+
+_species.get_demographic_model("OutOfAfrica_4J17").register_qc(JouganousOOA2017())
+
+
+def Boyko2008():
+    """
+    African-American two-epoch instantaneous growth model from Boyko et al
+    2008, fit to the synonymous SFS for the 11 of 15 African Americans showing
+    the least European ancestry, using coalescent simulations with
+    recombination with the maximum likelihood method of Williamson et al 2005;
+    times were calibrated assuming 3e5 generations since human-chimp divergence
+    and fitting the number of synonymous human-chimp differences.
+    """
+    id = "QC-Africa_1B08"
+    Nanc = 7778
+    Ncurr = 25636
+    Texp = 6809  # generations ago
+
+    de = msprime.Demography()
+    de.add_population(
+        initial_size=Ncurr,
+        name="African_Americans",
+        description="African-Americans from Boyko et al",
+    )
+
+    de.add_population_parameters_change(
+        time=Texp,
+        initial_size=Nanc,
+    )
+
+    return stdpopsim.DemographicModel(
+        id=id,
+        description=id,
+        long_description=id,
+        generation_time=None,
+        model=de,
+        mutation_rate=1.8e-8,
+    )
+
+
+_species.get_demographic_model("Africa_1B08").register_qc(Boyko2008())

@@ -3,10 +3,8 @@ Infrastructure for defining basic information about species and
 organising the species catalog.
 """
 import logging
-import warnings
 
 import attr
-import msprime
 
 import stdpopsim
 import stdpopsim.utils
@@ -14,6 +12,21 @@ import stdpopsim.utils
 logger = logging.getLogger(__name__)
 
 registered_species = {}
+
+
+def _missing_from_catalog(type_of_thing, thing_id, available_things):
+    """
+    Return a user-friendly message if the user requests an identifier not in the
+    catalog
+
+    :param str type_of_thing: The kind of requested object (e.g. species,
+         genetic map, etc.)
+    :param str thing_id: the string identifier of the requested object.
+    :param list available_things: a list of string identifiers that are
+         available.
+    """
+    avail_str = ", ".join(available_things)
+    return f"{type_of_thing} '{thing_id}' not in catalog ({avail_str})"
 
 
 def register_species(species):
@@ -42,7 +55,7 @@ def get_species(id):
     if id not in registered_species:
         # TODO we should probably have a custom exception here and standardise
         # on using these for all the catalog search functions.
-        raise ValueError(f"Species '{id}' not in catalog")
+        raise ValueError(_missing_from_catalog("Species", id, registered_species))
     return registered_species[id]
 
 
@@ -68,6 +81,12 @@ def all_demographic_models():
     for species in all_species():
         for model in species.demographic_models:
             yield model
+
+
+def all_dfes():
+    for species in all_species():
+        for dfe in species.dfes:
+            yield dfe
 
 
 def all_annotations():
@@ -119,6 +138,9 @@ class Species:
     :ivar demographic_models: This list of :class:`DemographicModel`
         instances in the catalog for this species.
     :vartype demographic_models: list
+    :ivar dfes: This list of :class:`DFE`
+        instances in the catalog for this species.
+    :vartype dfes: list
     :ivar ensembl_id: The ensembl id for the species which is used by
         maintenance scripts to query ensembl's database.
     :vartype ensembl_id: str
@@ -131,11 +153,12 @@ class Species:
     generation_time = attr.ib(default=0, kw_only=True)
     population_size = attr.ib(default=0, kw_only=True)
     demographic_models = attr.ib(factory=list, kw_only=True)
+    dfes = attr.ib(factory=list, kw_only=True)
     ensembl_id = attr.ib(type=str, kw_only=True)
     citations = attr.ib(factory=list, kw_only=True)
 
     # A list of genetic maps. This is undocumented as the parameter is not
-    # intended to be used when the Species is initialsed.
+    # intended to be used when the Species is initialised.
     # Use add_genetic_map() instead.
     genetic_maps = attr.ib(factory=list, kw_only=True)
     annotations = attr.ib(factory=list, kw_only=True)
@@ -187,92 +210,16 @@ class Species:
         :rtype: :class:`.Contig`
         :return: A :class:`.Contig` describing the section of the genome.
         """
-        # TODO: add non-autosomal support
-        non_autosomal_lower = ["x", "y", "m", "mt", "chrx", "chry", "chrm"]
-        if chromosome is not None and chromosome.lower() in non_autosomal_lower:
-            warnings.warn(
-                stdpopsim.NonAutosomalWarning(
-                    "Non-autosomal simulations are not yet supported. See "
-                    "https://github.com/popsim-consortium/stdpopsim/issues/383 and "
-                    "https://github.com/popsim-consortium/stdpopsim/issues/406"
-                )
-            )
-        if chromosome is None:
-            if genetic_map is not None:
-                raise ValueError("Cannot use genetic map with generic contic")
-            if length_multiplier != 1:
-                raise ValueError("Cannot use length multiplier for generic contig")
-            if inclusion_mask is not None or exclusion_mask is not None:
-                raise ValueError("Cannot use mask with generic contig")
-            if length is None:
-                raise ValueError("Must specify sequence length of generic contig")
-            L_tot = 0
-            r_tot = 0
-            u_tot = 0
-            for chrom_data in self.genome.chromosomes:
-                if chrom_data.id.lower() not in non_autosomal_lower:
-                    L_tot += chrom_data.length
-                    r_tot += chrom_data.length * chrom_data.recombination_rate
-                    u_tot += chrom_data.length * chrom_data.mutation_rate
-            if mutation_rate is None:
-                mutation_rate = u_tot / L_tot
-            r = r_tot / L_tot
-            recomb_map = msprime.RateMap.uniform(length, r)
-            ret = stdpopsim.Contig(
-                recombination_map=recomb_map, mutation_rate=mutation_rate
-            )
-        else:
-            if length is not None:
-                raise ValueError("Cannot specify sequence length for named contig")
-            if inclusion_mask is not None and exclusion_mask is not None:
-                raise ValueError("Cannot specify both inclusion and exclusion masks")
-            chrom = self.genome.get_chromosome(chromosome)
-            if genetic_map is None:
-                logger.debug(f"Making flat chromosome {length_multiplier} * {chrom.id}")
-                gm = None
-                recomb_map = msprime.RateMap.uniform(
-                    round(chrom.length * length_multiplier), chrom.recombination_rate
-                )
-            else:
-                if length_multiplier != 1:
-                    raise ValueError("Cannot use length multiplier with empirical maps")
-                logger.debug(f"Getting map for {chrom.id} from {genetic_map}")
-                gm = self.get_genetic_map(genetic_map)
-                recomb_map = gm.get_chromosome_map(chrom.id)
-
-            inclusion_intervals = None
-            exclusion_intervals = None
-            if inclusion_mask is not None:
-                if length_multiplier != 1:
-                    raise ValueError("Cannot use length multiplier with mask")
-                if isinstance(inclusion_mask, str):
-                    inclusion_intervals = stdpopsim.utils.read_bed(
-                        inclusion_mask, chromosome
-                    )
-                else:
-                    inclusion_intervals = inclusion_mask
-            if exclusion_mask is not None:
-                if length_multiplier != 1:
-                    raise ValueError("Cannot use length multiplier with mask")
-                if isinstance(exclusion_mask, str):
-                    exclusion_intervals = stdpopsim.utils.read_bed(
-                        exclusion_mask, chromosome
-                    )
-                else:
-                    exclusion_intervals = exclusion_mask
-
-            if mutation_rate is None:
-                mutation_rate = chrom.mutation_rate
-
-            ret = stdpopsim.Contig(
-                recombination_map=recomb_map,
-                mutation_rate=mutation_rate,
-                genetic_map=gm,
-                inclusion_mask=inclusion_intervals,
-                exclusion_mask=exclusion_intervals,
-            )
-
-        return ret
+        return stdpopsim.Contig.species_contig(
+            species=self,
+            chromosome=chromosome,
+            genetic_map=genetic_map,
+            length_multiplier=length_multiplier,
+            length=length,
+            mutation_rate=mutation_rate,
+            inclusion_mask=inclusion_mask,
+            exclusion_mask=exclusion_mask,
+        )
 
     def get_demographic_model(self, id):
         """
@@ -288,7 +235,12 @@ class Species:
         for model in self.demographic_models:
             if model.id == id:
                 return model
-        raise ValueError(f"DemographicModel '{self.id}/{id}' not in catalog")
+        available_models = [dm.id for dm in self.demographic_models]
+        raise ValueError(
+            _missing_from_catalog(
+                "DemographicModel", f"{self.id}/{id}", available_models
+            )
+        )
 
     def add_demographic_model(self, model):
         if model.id in [m.id for m in self.demographic_models]:
@@ -296,6 +248,31 @@ class Species:
                 f"DemographicModel '{self.id}/{model.id}' already in catalog."
             )
         self.demographic_models.append(model)
+
+    def get_dfe(self, id):
+        """
+        Returns a DFE with the specified ``id``.
+
+        :param str id: The string identifier for the DFE.
+            A complete list of IDs for each species can be found in the
+            # TODO add that section to the species catalogo
+            "DFE" subsection for the species in the
+            :ref:`sec_catalog`.
+        :rtype: :class:`DFE`
+        :return: A :class:`DFE` that defines the requested model.
+        """
+        for dfe in self.dfes:
+            if dfe.id == id:
+                return dfe
+        available_dfes = [d.id for d in self.dfes]
+        raise ValueError(
+            _missing_from_catalog("DFE", f"{self.id}/{id}", available_dfes)
+        )
+
+    def add_dfe(self, dfe):
+        if dfe.id in [d.id for d in self.dfes]:
+            raise ValueError(f"DFE '{self.id}/{dfe.id}' already in catalog.")
+        self.dfes.append(dfe)
 
     def add_genetic_map(self, genetic_map):
         if genetic_map.id in [gm.id for gm in self.genetic_maps]:
@@ -319,7 +296,10 @@ class Species:
         for gm in self.genetic_maps:
             if gm.id == id:
                 return gm
-        raise ValueError(f"Genetic map '{self.id}/{id}' not in catalog")
+        available_maps = [gm.id for gm in self.genetic_maps]
+        raise ValueError(
+            _missing_from_catalog("GeneticMap", f"{self.id}/{id}", available_maps)
+        )
 
     def add_annotations(self, annotations):
         if annotations.id in [an.id for an in self.annotations]:
@@ -343,4 +323,7 @@ class Species:
         for an in self.annotations:
             if an.id == id:
                 return an
-        raise ValueError(f"Annotations '{self.id}/{id}' not in catalog")
+        available_anno = [anno.id for anno in self.annotations]
+        raise ValueError(
+            _missing_from_catalog("Annotations", f"{self.id}/{id}", available_anno)
+        )

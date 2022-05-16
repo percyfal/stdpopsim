@@ -22,6 +22,7 @@ setup(
         "Programming Language :: Python :: 3.7",
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
     ],
     keywords="simulations, recombination map, models",
     packages=["stdpopsim"],
@@ -34,7 +35,7 @@ setup(
     python_requires=">=3.7",
     # NOTE: make sure this is the 'attrs' package, not 'attr'!
     install_requires=[
-        "msprime>=1.0.0b1",
+        "msprime>=1.0.4",
         "attrs>=19.1.0",
         "appdirs",
         "humanize",

@@ -15,6 +15,7 @@ from sphinx.util.docutils import SphinxDirective
 from sphinx.util import logging
 
 import stdpopsim
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,12 @@ class SpeciesCatalogDirective(SphinxDirective):
 
     def get_genetic_map_id(self, species, genetic_map):
         return f"sec_catalog_{species.id}_genetic_maps_{genetic_map.id}".lower()
+
+    def get_annotation_id(self, species, annotation):
+        return f"sec_catalog_{species.id}_annotations_{annotation.id}".lower()
+
+    def get_dfe_id(self, species, dfe):
+        return f"sec_catalog_{species.id}_dfes_{dfe.id}".lower()
 
     def get_target(self, tid):
         """
@@ -207,7 +214,7 @@ class SpeciesCatalogDirective(SphinxDirective):
             row += entry
 
             entry = nodes.entry()
-            entry += nodes.paragraph(text=population.id)
+            entry += nodes.paragraph(text=population.name)
             row += entry
 
             entry = nodes.entry()
@@ -335,7 +342,6 @@ class SpeciesCatalogDirective(SphinxDirective):
             entry += nodes.paragraph(text="{:g}".format(chrom.mutation_rate))
             row += entry
 
-            # TODO add mutation/recombination rate.
             rows.append(row)
         tbody = nodes.tbody()
         tbody.extend(rows)
@@ -401,35 +407,215 @@ class SpeciesCatalogDirective(SphinxDirective):
         section += self.model_parameter_table(species, model)
         return [target, section]
 
+    def model_image(self, species, model):
+        import demesdraw
+        import matplotlib.pyplot as plt
+
+        mid = self.get_demographic_model_id(species, model)
+        _, ax = plt.subplots(1, 1, figsize=(4.5, 4), tight_layout=True)
+        # Conversion into demes object for easier plotting
+        graph = model.model.to_demes()
+        ax = demesdraw.tubes(graph, ax=ax, log_time=True)
+        ax.set_title(f"{model.id}", fontsize=10)
+        ax.set_xticklabels(
+            ax.get_xticklabels(),
+            rotation=45,
+            ha="right",
+            rotation_mode="anchor",
+            fontsize=10,
+        )
+        ax.set_ylabel("Time (generations)", fontsize=10)
+        os.makedirs(f"parameter_images/{species.id}/", exist_ok=True)
+        img_name = f"parameter_images/{species.id}/{mid}.png"
+        plt.savefig(img_name, dpi=150)
+        section = nodes.image(uri=img_name)
+        return section
+
+    def annotation_section(self, species, annotation):
+        map_id = self.get_annotation_id(species, annotation)
+        target = self.get_target(map_id)
+        section = nodes.section(ids=[map_id])
+        section += nodes.title(text=annotation.id)
+        section += nodes.paragraph(text=annotation.description)
+        section += nodes.rubric(text="Citations")
+        section += self.citation_list(annotation)
+        return [target, section]
+
+    def annotation_table(self, species):
+        table = nodes.table()
+        tgroup = nodes.tgroup(cols=3)
+        colspec = nodes.colspec(colwidth=1)
+        tgroup.append(colspec)
+        colspec = nodes.colspec(colwidth=1)
+        tgroup.append(colspec)
+        colspec = nodes.colspec(colwidth=1)
+        tgroup.append(colspec)
+
+        table += tgroup
+
+        thead = nodes.thead()
+        tgroup += thead
+        row = nodes.row()
+        entry = nodes.entry()
+        entry += nodes.paragraph(text="ID")
+        row += entry
+        entry = nodes.entry()
+        entry += nodes.paragraph(text="Year")
+        row += entry
+        entry = nodes.entry()
+        entry += nodes.paragraph(text="Description")
+        row += entry
+
+        thead.append(row)
+
+        rows = []
+        for an in species.annotations:
+            row = nodes.row()
+            rows.append(row)
+
+            map_id = self.get_annotation_id(species, an)
+            entry = nodes.entry()
+            para = nodes.paragraph()
+            entry += para
+            para += nodes.reference(internal=True, refid=map_id, text=an.id)
+            row += entry
+
+            entry = nodes.entry()
+            entry += nodes.paragraph(text=an.citations[0].year)
+            row += entry
+
+            entry = nodes.entry()
+            para = nodes.paragraph()
+            entry += nodes.paragraph(text=an.description)
+            row += entry
+
+        tbody = nodes.tbody()
+        tbody.extend(rows)
+        tgroup += tbody
+
+        return table
+
+    def dfe_section(self, species, dfe):
+        dfe_id = self.get_dfe_id(species, dfe)
+        target = self.get_target(dfe_id)
+        section = nodes.section(ids=[dfe_id])
+        section += nodes.title(text=dfe.id)
+        section += nodes.paragraph(text=dfe.description)
+        section += nodes.rubric(text="Citations")
+        section += self.citation_list(dfe)
+        return [target, section]
+
+    def dfes_table(self, species):
+        table = nodes.table()
+        tgroup = nodes.tgroup(cols=3)
+        colspec = nodes.colspec(colwidth=1)
+        tgroup.append(colspec)
+        colspec = nodes.colspec(colwidth=1)
+        tgroup.append(colspec)
+        colspec = nodes.colspec(colwidth=1)
+        tgroup.append(colspec)
+
+        table += tgroup
+
+        thead = nodes.thead()
+        tgroup += thead
+        row = nodes.row()
+        entry = nodes.entry()
+        entry += nodes.paragraph(text="ID")
+        row += entry
+        entry = nodes.entry()
+        entry += nodes.paragraph(text="Year")
+        row += entry
+        entry = nodes.entry()
+        entry += nodes.paragraph(text="Description")
+        row += entry
+
+        thead.append(row)
+
+        rows = []
+
+        for dfe in species.dfes:
+            row = nodes.row()
+            rows.append(row)
+
+            dfe_id = self.get_dfe_id(species, dfe)
+            entry = nodes.entry()
+            para = nodes.paragraph()
+            entry += para
+            para += nodes.reference(internal=True, refid=dfe_id, text=dfe.id)
+            row += entry
+
+            entry = nodes.entry()
+            entry += nodes.paragraph(text=dfe.citations[0].year)
+            row += entry
+
+            entry = nodes.entry()
+            para = nodes.paragraph()
+            entry += nodes.paragraph(text=dfe.description)
+            row += entry
+
+        tbody = nodes.tbody()
+        tbody.extend(rows)
+        tgroup += tbody
+
+        return table
+
     def run(self):
+        # species:
         species = stdpopsim.get_species(self.arguments[0])
         sid = f"sec_catalog_{species.id}"
         species_target = self.get_target(sid)
         section = nodes.section(ids=[sid], names=[sid])
         section += nodes.title(text=species.name)
         section += self.species_summary(species)
-
+        # genomes:
         genome_section = nodes.section(ids=[f"sec_catalog_{species.id}_genome"])
         genome_section += nodes.title(text="Genome")
         genome_section += self.chromosomes_table(species)
+        genome_section += nodes.paragraph(
+            text="Mutation and recombination rates "
+            "are in units of per bp and per generation."
+        )
         section += genome_section
         section += nodes.transition()
-
-        maps_section = nodes.section(ids=[f"sec_catalog_{species.id}_genetic_maps"])
-        maps_section += nodes.title(text="Genetic Maps")
-        maps_section += self.genetic_maps_table(species)
-        for gmap in species.genetic_maps:
-            maps_section += self.genetic_map_section(species, gmap)
-        section += maps_section
-        section += nodes.transition()
-        models_section = nodes.section(ids=[f"sec_catalog_{species.id}_models"])
-        models_section += nodes.title(text="Demographic Models")
-        models_section += self.models_table(species)
-        for i, model in enumerate(species.demographic_models):
-            models_section += self.model_section(species, model)
-            if i < len(species.demographic_models) - 1:
-                models_section += nodes.transition()
-        section += models_section
+        # genetic maps:
+        if len(species.genetic_maps) > 0:
+            maps_section = nodes.section(ids=[f"sec_catalog_{species.id}_genetic_maps"])
+            maps_section += nodes.title(text="Genetic Maps")
+            maps_section += self.genetic_maps_table(species)
+            for gmap in species.genetic_maps:
+                maps_section += self.genetic_map_section(species, gmap)
+            section += maps_section
+            section += nodes.transition()
+        # demographic models:
+        if len(species.demographic_models) > 0:
+            models_section = nodes.section(ids=[f"sec_catalog_{species.id}_models"])
+            models_section += nodes.title(text="Demographic Models")
+            models_section += self.models_table(species)
+            for i, model in enumerate(species.demographic_models):
+                models_section += self.model_section(species, model)
+                models_section += self.model_image(species, model)
+                if i < len(species.demographic_models) - 1:
+                    models_section += nodes.transition()
+            section += models_section
+        # annotation:
+        if len(species.annotations) > 0:
+            annot_section = nodes.section(ids=[f"sec_catalog_{species.id}_annotations"])
+            annot_section += nodes.title(text="Annotations")
+            annot_section += self.annotation_table(species)
+            for an in species.annotations:
+                annot_section += self.annotation_section(species, an)
+            section += annot_section
+            section += nodes.transition()
+        # DFE:
+        if len(species.dfes) > 0:
+            dfes_section = nodes.section(ids=[f"sec_catalog_{species.id}_dfe"])
+            dfes_section += nodes.title(text="Distribution of Fitness Effects (DFEs)")
+            dfes_section += self.dfes_table(species)
+            for i, dfe in enumerate(species.dfes):
+                dfes_section += self.dfe_section(species, dfe)
+            section += dfes_section
+            section += nodes.transition()
         return [species_target, section]
 
 

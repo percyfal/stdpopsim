@@ -123,7 +123,7 @@ class Engine:
                 f"contig's mutation rate {contig.mutation_rate}. Diversity levels "
                 "may be different than expected for this species. For details see "
                 "documentation at "
-                "https://stdpopsim.readthedocs.io/en/latest/tutorial.html"
+                "https://popsim-consortium.github.io/stdpopsim-docs/stable/tutorial.html"
             )
 
 
@@ -237,13 +237,19 @@ class _MsprimeEngine(Engine):
                 del kwargs["random_seed"]
             else:
                 raise ValueError("Cannot set both seed and random_seed")
+        # test to make sure contig is fully neutral
+        if not contig.is_neutral:
+            raise ValueError(
+                "Contig had non neutral mutation types "
+                "but you are using the msprime engine"
+            )
 
         # TODO: remove this after a release or two. See #745.
         self._warn_zigzag(demographic_model)
         self._warn_mutation_rate_mismatch(contig, demographic_model)
 
         rng = np.random.default_rng(seed)
-        seeds = rng.integers(1, 2 ** 31 - 1, size=2)
+        seeds = rng.integers(1, 2**31 - 1, size=2)
 
         ts = msprime.sim_ancestry(
             samples=samples,

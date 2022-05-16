@@ -80,7 +80,7 @@ environment and then should be able to install the development requirements usin
 
 
 We do require ``msprime``, so please see the the `installation notes
-<https://msprime.readthedocs.io/en/stable/installation.html>`_ if you
+<https://tskit.dev/msprime/docs/stable/installation.html>`_ if you
 encounter problems with it.
 
 .. Note:: If you have trouble installing any of the requirements, your ``pip`` may be the wrong version.
@@ -407,7 +407,7 @@ message:
     hint: 'git pull ...') before pushing again.
     hint: See the 'Note about fast-forwards' in 'git push --help' for details.
 
-**DO NOT LISTEN TO GIT IN THIS CASE!** Git is giving you is **terrible advice**
+**DO NOT LISTEN TO GIT IN THIS CASE!** Git is giving you **terrible advice**
 which will mess up your branch. What we need to do is replace the state of
 the branch ``topic_branch_name`` on your fork on GitHub (the ``upstream`` remote)
 with the state of your local branch, ``topic_branch_name``. We do this
@@ -446,13 +446,39 @@ and have successfully squashed and rebased.
 When rebasing goes wrong
 ------------------------
 
-Sometimes rebasing goes wrong, and you end up in a frustrating loop of making and
-undoing the same changes over and over again. In this case, it can be simplest to
-make a diff of your current changes, and apply these in a single commit. First
-we take the diff between the current state of the files in our branch and
-``upstream/main`` and save it as a patch::
+Sometimes rebasing goes wrong, and you end up in a frustrating loop of making
+and undoing the same changes over and over again. First, here's an explanation
+of what's going on. Let's say that the branch we're working on (and trying to
+rebase) is called ``topic_branch``, and it branched off from ``upstream/main``
+at some point in the past::
 
-    $ git diff upstream/main > changes.patch
+         A1---A2---A3  (topic_branch)
+        /
+    ---M---o---o---o---o---B  (upstream/main)
+
+So, what we'd really like to do is to take the commits ``A1``, ``A2``, and
+``A3`` and apply them to the current state of the ``upstream/main`` branch,
+i.e., on top of commit ``B``. If we just do ``git rebase upstream/main``
+then git will try to first apply ``A1``; then ``A2``; and finally ``A3``.
+If there's conflicts, this is painful, so we might want to *first* squash
+the three commits together into one commit, and then rebase that single commit.
+Then we'll only have to resolve conflicts once. Said another way: we often
+use ``git rebase -i upstream/main`` to both squash *and* rebase; but
+it may be easier to squash first then rebase after.
+
+We'll be doing irreversible changes, so first we should make a backup copy of
+the branch::
+
+    $ git checkout topic_branch  # make sure we're on the right branch
+    $ git checkout -b topic_backup # make the backup
+    $ git checkout topic_branch  # go back to the topic branch
+
+Next, we take the diff between the current state of the files and the place
+where your changes last diverged from ``upstream/main`` (the commit labelled
+``M`` in the diagram above), and save it as a patch. To do this, make sure
+you are in the root of the git directory, and::
+
+    $ git diff --merge-base upstream/main > changes.patch
 
 After that, we can check out a fresh branch and check if everything works
 as it's supposed to::
@@ -466,12 +492,16 @@ After we've verified that everything works, we then checkout the original
 topic branch and replace it with the state of the ``test_branch``, and
 finally force-push to the remote topic branch on your fork::
 
-    $ git checkout topic_branch_name
+    $ git checkout topic_branch
     $ git reset --hard test_branch
-    $ git push -f origin topic_branch_name
+    $ git push -f origin topic_branch
 
 Hard resetting and force pushing are not reversible operations, so please
-beware!
+beware! After you've done this, you can go make sure nothing bad happened
+by checking that the only changes listed under "files changed" in the github
+pull request are changes that you have made. For more on finding the fork
+point, with diagrams, and an alternative workflow, see `the git docs
+<https://git-scm.com/docs/git-merge-base>`__.
 
 .. _sec_development_demographic_model:
 
@@ -488,8 +518,7 @@ Steps for adding a new demographic model:
 5. `Submit a Pull Request on GitHub`_
 
 If this is your first time implementing a demographic model in `stdpopsim`, it's a good
-idea to take some time browsing the
-`Catalog <https://stdpopsim.readthedocs.io/en/latest/catalog.html>`_
+idea to take some time browsing the :ref:`sec_catalog`
 and species' demographic models in the
 source code to see how existing models are typically written and documented. If you have
 any questions or confusion about formatting or implementing demographic models, please
@@ -563,7 +592,7 @@ The demographic model function should follow this format:
         ]
 
         generation_time = "FILL ME"
-        mutation_rate = "FILL ME"
+        mutation_rate = "FILL ME"  # per bp per generation
 
         # parameter value definitions based on published values
 
@@ -605,9 +634,10 @@ The demographic model should include the following:
 * ``generation_time``: The generation time for the species in years. If you are
   implementing a generic model, the generation time should default to 1.
 * ``mutation_rate``: The mutation rate assumed during the inference of this demographic
-  model, if a mutation rate was used. If no mutation rate is associated with this
-  demographic model, which is generally uncommon but possible, depending on the
-  inference method, the mutation rate should be set to ``None``.
+  model, per bp per generation, if a mutation rate was used. If no mutation
+  rate is associated with this demographic model, which is generally uncommon
+  but possible, depending on the inference method, the mutation rate should be
+  set to ``None``.
 
 Every demographic model has a few necessary features or attributes. First of all,
 demographic models are defined by the population sizes, migration rates, split and
@@ -620,7 +650,7 @@ parameters that give the maximum likelihood fit), which are translated into
 ``population_configurations``, ``migration_matrix``, and ``demographic_events``. If this
 is your first time specifying a model using `msprime`, it's worth taking some time to
 read through the `msprime`
-`documentation and tutorials <https://msprime.readthedocs.io/en/stable/tutorial.html>`_.
+`documentation and tutorials <https://tskit.dev/msprime/docs/stable/quickstart.html>`_.
 
 
 ---------------------
@@ -734,7 +764,7 @@ follow these steps for it to be officially supported by stdpopsim:
        assigned/volunteers to do a blind implementation of the model.
 
     3. Developer B creates a blind implementation of the model in the
-       ``stdpopsim/qc/species_name_qc.py`` file, remembering to register the
+       ``stdpopsim/qc/species_name.py`` file, remembering to register the
        QC model implementation (see other QC models for examples).  Note that
        if you are adding a new species you will have to add a new import to
        ``stdpopsim/qc/__init__.py``.
@@ -767,151 +797,176 @@ When developers A and B disagree on the model implementation, the process is to:
 Adding a new species
 ********************
 To add a new species to `stdpopsim` several things are required:
+
 1. The genome definition
-2. Default species parameters
-3. A genetic map with local recombination rates (optional)
+2. Generation time estimate
+3. Mutation rate (per generation)
+4. Recombination rate (per generation)
+5. Characteristic population size
 
-Once you have these things the first step is to create a new file in the `catalog`
-directory named for the species (see `Naming conventions`_ for more details). All
-code described below should go in this file unless explicitly specified otherwise.
-
---------------------------
-Default species parameters
---------------------------
-
-Four default parameters are required to create a new species:
-1. Generation time estimate
-2. Mutation rate
-3. Recombination rate
-4. Characteristic population size
+A genetic map with local recombination rates is optional.
 
 These parameters should be based on what values might be drawn from a typical population
 as represented in the literature for that species. Consequently one or more citations for
 each value are expected and will be required for constructing the species object detailed
 below.
 
+Once you have these things the first step is to create a new subdirectory of the `catalog/`
+directory named for the species (see `Naming conventions`_ for more details). All
+code described below should go in this directory unless explicitly specified otherwise.
+
 -----------------------------------
 Adding/Updating a genome definition
 -----------------------------------
 
-A genome definition is created with a call to `stdpopsim.Genome()`  which requires a list
-of chromosomes and a citation for the assembly. `stdpopsim` has an automated procedure
-for obtaining this list from ensembl and saving it for automated parsing. First however
-the initial species directory must be created in the `stdpopsim/catalog` directory (e.g.
-`stdpopsim/catalog/AraTha`). Once that is done, run the `update_ensembl_data.py` script
-present in the top level directory providing the ensembl species id(s) as "_" delimited
-name(s) for positional arguments as shown below. If no positional arguments are specified
-then all specified registered in `stdpopsim` will be updated.
+`stdpopsim` has an automated procedure for generating a genome definition, which is
+accomplished by pulling data from Ensembl and saving it for parsing. To do this,
+hand the `maintenance` command line interface a "_" delimited Ensembl species ID as a
+positional argument as shown below. A partial list of the
+genomes housed on Ensembl can be found `here <https://metazoa.ensembl.org/species.html>`__.
 
 .. code-block:: shell
 
-    python update_ensembl_data.py arabidopsis_thaliana
+    python -m maintenance add-species arabidopsis_thaliana
 
-This will write/overwrite the `ensembl_info.py` file in the appropriate catalog
-subdirectory. Then add the following to the head of `catalog/{species_id}/__init__.py`.
+This will generate new files inside `catalog/{species_id}/`:
+
+* `genome_data.py`
+* `species.py`
+* `__init__.py`
+
+as well as stubbing out tests in `tests/test_{species_id}.py`.
+
+The `genome_data.py` file contains the physical map of the genome; the
+`maintenance` utility sucks down a whole lot of useful information for free.
+This file essentially puts together a data dictionary which has slots for the
+assembly accession number, the assembly name, and a dict representing the
+chromosome names and their associated lengths. If synonyms are defined (e.g.,
+chr2L for 2L) then those are given in the list that follows. You double-check
+the values, but probably there is no reason to edit this file.
+
+Next, the `species.py` file will need to be edited with the species-specific
+information and corresponding citations. Inside this file are commented
+instructions for each section. Either chromosome-specific or genome-wide
+recombination rates and mutations rates can be used at this stage; the
+citations attached to these rates should be filled in inside the code block
+beginning with `_genome`. For example, below is the _genome code block for
+*A. thaliana* with citations included:
 
 .. code-block:: python
-
-    from . import genome_data
-
-To create the chromosome object that make up a genome add the following code to
-`catalog/{species_id}/__init__.py` and supply default mutation and recombination rates
-along with citations for the assembly (and additional ones for the mutation, and
-recombination rates if necessary). This is then used to create a `genome` object.
-
-.. code-block:: python
-
-    # A citation for the chromosome parameters. Additional citations may be needed if
-    # the mutation or recombination rates come from other sources. In that case create
-    # additional citations with the appropriate reasons specified (see API documentation
-    # for stdpopsim.citations)
-
-    _assembly_citation = stdpopsim.Citation(
-        doi="FILL ME",
-        year="FILL ME",
-        author="Author et al.",
-        reasons={stdpopsim.CiteReason.ASSEMBLY},
-    )
-
-    # Parse list of chromosomes into a list of Chromosome objects which contain the
-    # chromosome name, length, mutation rate, and recombination rate
-    _chromosomes = []
-
-    for name, data in genome_data.data["chromosomes"].items():
-        _chromosomes.append(
-            stdpopsim.Chromosome(
-                id=name,
-                length=data["length"],
-                synonyms=data["synonyms"],
-                mutation_rate=FILL_ME,
-                recombination_rate=FILL_ME,
-            )
-        )
-
-    # Create a genome object
 
     _genome = stdpopsim.Genome(
-        chromosomes=_chromosomes, assembly_citations=[_assembly_citation]
+        chromosomes=_chromosomes,
+        assembly_name=genome_data.data["assembly_name"],
+        assembly_accession=genome_data.data["assembly_accession"],
+        citations=[
+            stdpopsim.Citation(
+                author="Ossowski et al.",
+                year=2010,
+                doi="https://doi.org/10.1126/science.1180677",
+                reasons={stdpopsim.CiteReason.MUT_RATE},
+            ),
+            stdpopsim.Citation(
+                author="Huber et al.",
+                year=2014,
+                doi="https://doi.org/10.1093/molbev/msu247",
+                reasons={stdpopsim.CiteReason.REC_RATE},
+            ),
+            stdpopsim.Citation(
+                doi="https://doi.org/10.1093/nar/gkm965",
+                year=2007,
+                author="Swarbreck et al.",
+                reasons={stdpopsim.CiteReason.ASSEMBLY},
+            ),
+        ],
     )
 
-Once you have a genome object you can create a new `Species` object which contains
-species identifiers, the genome, and default generation time and population size settings
-along with the relevant citation(s). Below is an example species definition for
-Arabidopsis thaliana and a final line of code that registers the species in the catalog.
 
-.. code-block:: python
+Generation time and population size, along with relevent citations, are filled
+in inside the code block beginning with `_species`. It may be useful to look at
+the existing species.py files inside the catalog/ directory for reference.
 
-    _gen_time_citation = stdpopsim.Citation(
-        doi="https://doi.org/10.1890/0012-9658(2002)083[1006:GTINSO]2.0.CO;2",
-        year="2002",
-        author="Donohue",
-        reasons={stdpopsim.CiteReason.GEN_TIME},
-    )
+Once these fields have been entered, you should be able to load and simulate
+the newly added species using `stdpopsim`.
 
-    _pop_size_citation = stdpopsim.Citation(
-        doi="https://doi.org/10.1016/j.cell.2016.05.063",
-        year="2016",
-        author="1001GenomesConsortium",
-        reasons={stdpopsim.CiteReason.POP_SIZE},
-    )
+However, the species still needs to be checked by someone else, i.e, QC'ed.
+The maintenance script has also created a minimal set of tests in the file
+`tests/test_{species_id}.py`. These tests should *not* be filled out by the
+person who adds the species, but rather by someone else, as part of the
+review process. However, some tests are already present,
+and you can run them as follows:
 
-    _species = stdpopsim.Species(
-        id="AraTha",
-        name="Arabidopsis thaliana",
-        common_name="A. thaliana",
-        genome=_genome,
-        generation_time=1.0,
-        generation_time_citations=[_gen_time_citation],
-        population_size=10 ** 4,
-        population_size_citations=[_pop_size_citation],
-    )
+.. code-block:: shell
 
-    stdpopsim.register_species(_species)
+   python -m pytest tests/test_AnoGam.py
 
-Once all of this is done, go to the `catalog/__init__.py` file and add a line like the
-one below using the six-letter species identifier. Make sure to keep the comment to
-prevent linting issues.
+This will check for things related to missing information and formatting. For
+example, it checks that the citation year is of type `int` rather than `str`
+(i.e., no quotes).
 
-.. code-block:: python
-
-    from .catalog import PonAbe  # NOQA
+At some point during adding a species, you should start a pull request with your
+changes. It does not have to be finished, since it's much easier for others to
+help if they can see your code.
 
 ----------------------
 Species review process
 ----------------------
-Once you are satisfied that the species can be simulated via the CLI, submit a pull
-request with your changes. The species definition will go through a review process.
-This process includes not only a code review, but also includes a QC process to double
-check parameters and citations are appropriate.  To initiate the QC process, open a
+
+Once everything works, we will merge your pull request, and the species will be
+in stdpopsim, but still needs to go through a review process, in which someone else
+checks parameters and citations as appropriate.  To initiate this process, open a
 new `issue <https://github.com/popsim-consortium/stdpopsim/issues/new/choose>`__
 using the 'Species QC issue template'. One or more volunteers will check items off
 the checklist, until all items have been completed satisfactorily. The QC issue,
-or the pull request, may be used for review discussion. The new species will be
-merged once the checklist is completed.
+or the pull request, may be used for review discussion.
+
+To begin reviewing (i.e., QC'ing) a species, you should state your intention on the
+QC issue (so we don't duplicate effort) and start a pull request to fill out the code.
+During the process of QC, other developers fill in the tests that are disabled
+in the `tests/test_{species_name}.py` file by looking at the original papers
+(not the implementation!) and filling in what they see to be the appropriate
+values. For instance, a test for an unreviewed species might look like this:
+
+.. code-block:: python
+
+    @pytest.mark.skip("Recombination rate QC not done yet")
+    @pytest.mark.parametrize(["name", "rate"], {}.items())
+    def test_recombination_rate(self, name, rate):
+        assert rate == pytest.approx(self.genome.get_chromosome(name).recombination_rate)
+
+Looking at `tests/test_AedAeg.py`, we see this:
+
+.. code-block:: python
+
+    @pytest.mark.parametrize(
+        ["name", "rate"],
+        {"1": 0.306e-8, "2": 0.249e-8, "3": 0.291e-8, "MT": 0.0}.items(),
+    )
+    def test_recombination_rate(self, name, rate):
+        assert rate == pytest.approx(self.genome.get_chromosome(name).recombination_rate)
+
+The `@pytest.mark.skip` line has been deleted (because we should no longer skip
+this test), and the dictionary (`{}`) in the `@pytest.mark.parameterize` line
+has been filled out with key: value pairs that give the names and (mean) rates of
+each chromosome. When we run tests (and, we can run only the *Aedes aegypti* tests
+with `python -m pytest tests/test_AedAeg.py`), this will compare the values in the
+tests file to the values loaded from stdpopsim (and error if they differ).
+Filling out all these missing values in the tests file should get the species
+entirely QC'ed. When it's done, we'll merge the PR and the species will be official!
+
+Sometimes it's not clear which values to use (e.g., perhaps there are different
+mutation rates estimated from two different groups of samples); in such cases
+the original author should leave comments in the code explaining the choice,
+and a note in the QC issue. If the values that the reviewer finds still do not
+agree with the ones the original author found, they (and others) should discuss
+on github about the best values to enter; once consensus is reached these can
+be fixed up to agree in the QC pull request (i.e., you don't need to start
+another pull request to change the values in the catalog itself).
 
 ********************
 Adding a genetic map
 ********************
+
 Some species have sub-chromosomal recombination maps available. They can be added to
 `stdpopsim` by creating a new `GeneticMap` object and providing a formatted file
 detailing recombination rates to a designated `stdpopsim` maintainer who then uploads
@@ -921,7 +976,7 @@ Each chromosome should be placed in a separate file and with the chromosome id i
 file name in such a way that it can be programatically parsed out. IMPORTANT: chromosome
 ids must match those provided in the genome definition exactly! Below is an example start
 to a recombination map file (see `here
-<https://msprime.readthedocs.io/en/stable/api.html#msprime.RecombinationMap.read_hapmap>`_
+<https://tskit.dev/msprime/docs/stable/api.html#msprime.RateMap.read_hapmap>`_
 for more details)::
 
     Chromosome Position(bp) Rate(cM/Mb) Map(cM)
@@ -1052,6 +1107,17 @@ to him until directed).
          --useAdjacentAvg \
          --retainIntermediates
 
+
+
+.. _sec_development_dfe_model:
+
+******************
+Adding a DFE model
+******************
+
+TODO: WRITE ME
+
+
 ****************
 Coding standards
 ****************
@@ -1081,7 +1147,7 @@ Genetic maps are named using a descriptive name and the assembly version accordi
 to ``${CamelCaseDescriptiveName}_${Assembly}``. e.g., the HapMap phase 2 map on
 the GRCh37 assembly becomes HapMapII_GRCh37.
 
-Finally demographic models are named using a combination of a descriptive name,
+Demographic models are named using a combination of a descriptive name,
 information about the simulation, and information about the publication it was
 presented in. Specifically we use
 ``${SomethingDescriptive}_${number_of_populations}${first_author_initial}${two_digit_date}``
@@ -1090,6 +1156,12 @@ where the descriptive text is meant to capture something about the model
 is the number of populations implemented in the model (not necessarily the number
 from which samples are drawn). For author initial we will use a single letter, the 1st,
 until an ID collision, in which case we will include the 2nd letter, and so forth.
+
+DFEs (Distributions of Fitness Effects) are similarly named using something descriptive
+of the distribution, and information about the publication:
+``${SomethingDescriptive}_${First_authors_last_name_first_letter}{two_digit_date}``.
+For instance, if the distribution in question is a lognormal distribution,
+then ``LogNormal`` might be the descriptive string.
 
 
 **********
@@ -1136,6 +1208,24 @@ before::
 Finally, rename ``pre-commit.sample`` to simply ``pre-commit``
 
 *************
+Code Coverage
+*************
+
+As part of the continuous testing suite we have automated checking of how
+well the test units cover the source code. As a result it's very helpful
+to check locally how well your tests are covering your code by asking
+`pytest` for coverage reports. This can be done with::
+
+    $ pytest --cov-report html --cov=stdpopsim tests/
+
+this will output a directory of html files for you to browse test coverage
+for every file in `stdpopsim` in a reasonably straightfoward graphical
+way. To see them, direct your web browser to the `htmlcov/index.html` file.
+You'll be looking for lines of code that are highlighted yellow or red
+indicated that tests do not currently cover that bit of code.
+
+
+*************
 Documentation
 *************
 
@@ -1149,3 +1239,23 @@ HTML output in the ``_build/html/`` directory.
 .. note::
 
     You will need ``stdpopsim`` to be installed for the build to work.
+
+
+********************
+Making a new release
+********************
+
+Here is a list of things to do when making a new release:
+
+1. Update the changelog and commit
+2. Create a release using the GitHub UI
+3. `git fetch upstream` on your local branch.
+    Then check out `upstream/main` and create a release tarball
+    (with `python setup.py sdist`).
+    Setuptools_scm will detect the version appopriately.
+4. Upload to PyPI: `twine upload dist/{version just tagged}.tar.gz`
+5. After the release, if everything looks OK,
+   update the symlink for ``stable`` in the
+   `stdpopsim-docs <https://github.com/popsim-consortium/stdpopsim-docs>`_
+   repository
+6. Check on the conda feedstock PR.

@@ -1,61 +1,6 @@
 import attr
 
 
-@attr.s(kw_only=True)
-class MutationType(object):
-    """
-    TODO: docstring.
-
-    See SLiM documentation for initializeMutationType().
-    """
-
-    dominance_coeff = attr.ib(default=0.5, type=float)
-    distribution_type = attr.ib(default="f", type=str)
-    distribution_args = attr.ib(factory=lambda: [0], type=list)
-    convert_to_substitution = attr.ib(default=True, type=bool)
-
-    def __attrs_post_init__(self):
-        if self.dominance_coeff < 0:
-            raise ValueError(f"Invalid dominance coefficient {self.dominance_coeff}.")
-
-        # TODO: Add more distribution types like "e", "n", and "w".
-        #       We probably shouldn't support "s" because it takes an
-        #       arbitrary Eidos code string as an argument.
-        # To add a new distribution type: validate the
-        # distribution_args here, and add unit tests.
-        if self.distribution_type == "f":
-            # Fixed-value selection coefficent.
-            if len(self.distribution_args) != 1:
-                raise ValueError(
-                    "Fixed-value mutation types (distribution_type='f')"
-                    "take a single selection-coefficient parameter."
-                )
-        elif self.distribution_type == "g":
-            # Gamma-distributed selection coefficient with (mean, shape)
-            # parameterisation. A negative value for the mean is permitted,
-            # and indicates a reflection of the horizontal axis.
-            # See Eidos documentation for rgamma().
-            if len(self.distribution_args) != 2 or self.distribution_args[1] <= 0:
-                raise ValueError(
-                    "Gamma-distributed mutation types (distribution_type='g') "
-                    "use a (mean, shape) parameterisation, requiring shape > 0."
-                )
-        else:
-            raise ValueError(
-                f"{self.distribution_type} is not a supported distribution type"
-            )
-
-        # The index of the param in the distribution_args list that should be
-        # multiplied by Q when using --slim-scaling-factor Q.
-        self.Q_scaled_index = {
-            "e": 0,  # mean
-            "f": 0,  # fixed value
-            "g": 0,  # mean
-            "n": 1,  # standard deviation
-            "w": 0,  # scale
-        }[self.distribution_type]
-
-
 @attr.s
 class GenerationAfter(object):
     """

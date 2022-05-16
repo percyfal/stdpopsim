@@ -3,6 +3,7 @@
 =========
 Tutorials
 =========
+
 There are two main ways of accessing the resources of the ``stdpopsim`` package
 that will be detailed in this tutorial. The first is via the command line
 interface (CLI). This is useful if you want to do a straightforward run of the
@@ -82,7 +83,7 @@ To save time we will specify that the simulation use
 chromosome 22, using the ``-c`` option. We also specify that the resulting
 tree-sequence formatted output should be written to the file ``foo.ts`` with the
 ``-o`` option. For more information on how to use tree-sequence files see
-`tskit <https://tskit.readthedocs.io/en/latest/>`_ .
+`tskit <https://tskit.dev/tskit/docs/stable/introduction.html>`__.
 
 .. code-block:: console
 
@@ -171,7 +172,7 @@ a compact and efficient format for storing both genealogies and genome sequence.
 Some examples of analyzing tree sequences are given
 :ref:`below <sec_tute_analyses>`.
 If desired, these can be converted to VCF on the command line if the
-`tskit <https://tskit.readthedocs.io/>`__ package is installed,
+`tskit <https://tskit.dev/tskit/>`__ package is installed,
 with the ``tskit vcf`` command:
 
 .. code-block:: console
@@ -211,7 +212,7 @@ Using the SLiM simulation engine
 
 The default "simulation engine" -
 i.e., the program that actually does the simulating -
-is `msprime <https://msprime.readthedocs.io/en/stable/>`__,
+is `msprime <https://tskit.dev/msprime/>`__,
 a coalescent simulator.
 However, it is also possible to swap this out for
 `SLiM <https://messerlab.org/slim/>`__,
@@ -274,6 +275,69 @@ This is particularly true in simulations with large amounts of selection.
 See the SLiM manual and/or
 `Urrichio & Hernandez (2014) <https://www.genetics.org/content/197/1/221.short>`__
 for more discussion.
+
+Simulating genomes with selection
+---------------------------------
+
+In the example above given a species, recombination map, and demography, a contig
+was simulated assuming strictly neutrality. It is possible to incorporate selection in the
+simulations by (1) specifying the Distribution of Fitness Effects (DFE) for all new mutations
+across the entire contig or a subset of it; or by (2) adding a single mutation under selection,
+as for instance in a selective sweep.
+
+If a DFE is already described in the catalog, one can incorporate it into the simulation
+with the flag ``--dfe``. For instance, HomSap has a DFE described as Gamma_K17.
+To add it the example above we can type as follows:
+
+.. code-block:: console
+
+    $ stdpopsim -e slim --slim-scaling-factor 10 HomSap \
+        -c chr22 -l 0.05 --dfe Gamma_K17 -o foo.ts -d OutOfAfrica_2T12 2 4
+
+This example will simulate selection following the proportion of sites described in `Gamma_K17 <https://popsim-consortium.github.io/stdpopsim-docs/main/catalog.html#sec_catalog_homsap_dfes_gamma_k17>`_
+
+Instead of simulating the whole contig one can simulate only coding sequence (CDS) by using the flag ``--dfe-annotation``
+and specifying a CDS annotation:
+
+.. code-block:: console
+
+    $ stdpopsim -e slim --slim-scaling-factor 20 HomSap \
+         -c chr22 --dfe Gamma_K17 -o foo.ts -d OutOfAfrica_2T12 \
+         --dfe-annotation ensembl_havana_104_CDS 2 4
+
+
+If instead of an annotation file one has a bed file (ex.bed) like the one below:
+
+.. code-block:: console
+
+     chr1  100000  145000
+     chr1  150000  302425
+     chr1  302430  303000
+
+then it is possible to simulate selection in all intervals provided by the bed file by using the flag
+``--dfe-bed-file`` as follow:
+
+.. code-block:: console
+
+    $ stdpopsim -e slim --slim-scaling-factor 10 HomSap \
+         -c chr22 -l 0.05 --dfe Gamma_K17 -o foo.ts -d OutOfAfrica_2T12 \
+         --dfe-bed-file ex.bed 2 4
+
+The examples above (using the flags ``--dfe-annotation``, to use a named annotation, or ``--dfe-bed-file`` to include a bed file)
+incorporate selection on the specified segments of genome.
+
+To simulate, however, only a small chunk of contig with selection––as in a selective sweep––one can use the flag
+``--dfe-interval``:
+
+.. code-block:: console
+
+    $ stdpopsim -e slim --slim-scaling-factor 10 HomSap \
+        -c chr22 -l 0.05 --dfe Gamma_K17 -o foo.ts -d OutOfAfrica_2T12 \
+        --dfe-interval 1000,100000 2 4
+
+The DFE defined by Gamma_K17 will be incorporated only in positions between 1000 and 100000.
+
+See also the python API to incorporate `selection <https://popsim-consortium.github.io/stdpopsim-docs/latest/tutorial.html#incorporating-selection>`__.
 
 
 Debugging output from SLiM
@@ -338,7 +402,6 @@ However, extensive testing would need to be done to find out
 if data produced with such an extreme scaling factor
 actually resembles the data that would be produced without rescaling.
 
-
 .. _sec_python_tute:
 
 *************************************************
@@ -348,7 +411,7 @@ Running stdpopsim with the Python interface (API)
 Nearly all the functionality of ``stdpopsim`` is available through the CLI,
 but for complex situations it may be desirable to use python.
 Furthermore, downstream analysis may happen in python,
-using the `tskit <https://tskit.readthedocs.io>`__ tools for working
+using the `tskit <https://tskit.dev/tskit/>`__ tools for working
 with tree sequences.
 In order to use the ``stdpopsim`` API the ``stdpopsim`` package must be
 installed (see :ref:`Installation <sec_installation>`).
@@ -585,7 +648,7 @@ Sanity check the tree sequence output
 
 Now, we do some simple checks that our simulation worked with
 `tskit
-<https://tskit.readthedocs.io>`__.
+<https://tskit.dev/tskit/>`__.
 
 .. code-block:: python
 
@@ -645,7 +708,7 @@ However, ``stdpopsim`` also has the ability to produce
 simulations with SLiM, a forwards-time, individual-based simulator.
 Using SLiM provides us with a few more options.
 You may also want to install the
-`pyslim <https://pyslim.readthedocs.io/>`__ package
+`pyslim <https://tskit.dev/pyslim/>`__ package
 to extract the additional SLiM-specific information
 in the tree sequences that are produced.
 
@@ -718,7 +781,7 @@ the amount of time before the first demographic model change that SLiM begins si
 in units of N generations, where N is the population size at the first demographic model change.
 By default, this is set to 10, which is fairly safe.
 History before this period is simulated with an ``msprime`` coalescent simulation,
-called `"recapitation" <https://pyslim.readthedocs.io/en/latest/tutorial.html#recapitation>`__
+called `"recapitation" <https://tskit.dev/pyslim/docs/latest/tutorial.html#recapitation>`__
 because it attaches tops to any trees that have not yet coalesced.
 For instance, the ``Africa_1T12`` model
 `(Tennesen et al 2012) <https://doi.org/10.1126/science.1219240>`__
@@ -852,7 +915,7 @@ The first, and most essential step, is undoing the rescaling of time
 that the ``slim_scaling_factor`` has introduced.
 Next is "recapitation",
 for which the rationale and method is described in detail in the
-`pyslim documentation <https://pyslim.readthedocs.io/en/latest/tutorial.html#recapitation>`__.
+`pyslim documentation <https://tskit.dev/pyslim/docs/latest/tutorial.html#recapitation>`__.
 The third (and least crucial) step is to *simplify* the tree sequence.
 If as above we ask for 200 samples from a population whose final size is
 1,450 individuals (after rescaling),
@@ -867,7 +930,440 @@ because the size of the tree sequence grows very slowly with the number of sampl
 However, for many analyses you will probably want to extract samples
 of realistic size for real data.
 Again, methods to do this are discussed in the
-`pyslim documentation <https://pyslim.readthedocs.io/en/latest/tutorial.html#simplification>`__.
+`pyslim documentation <https://tskit.dev/pyslim/docs/latest/tutorial.html#simplification>`__.
+
+
+.. _sec_tute_selection:
+
+Incorporating selection
+=======================
+
+There are two general ways to incorporate selection into a simulation:
+Currently, both ways only work using the SLiM engine.
+The first way is by specifying a
+:class:`distribution of fitness effects <.DFE>` for all new mutations
+across the genome or in some subset of it.
+This is demonstrated below on
+`the whole genome <sec_tute_genome_wide_dfe>`_,
+on a given `subset of the genome <sec_tute_selection_single_gene>`_,
+and on `many subsets of the genome <sec_tute_selection_annotation>`_
+obtained from an :class:`.Annotation`.
+The second way is suitable for studying the effects of single
+selective sweeps: we add a single mutation under selection,
+as for instance in a `selective sweep <sec_tute_selective_sweep>`_.
+
+To make it so that new mutation added during the course of a simulation
+can affect fitness,
+we need to tell the contig where to put the mutations,
+and what distribution of selection coefficients they will have.
+To do this, we need to
+
+- choose a distribution of fitness effects (a :class:`.DFE`),
+- choose which part(s) of the Contig to apply the DFE to
+    (e.g., by choosing an :class:`.Annotation`), and
+- add these to the :meth:`Contig <.Contig.add_dfe>`,
+    with the Annotation saying which portions of the genome the DFE
+    applies to.
+
+The next three examples demonstrate how to do this.
+
+.. _sec_tute_genome_wide_dfe:
+
+1. Simulating with a genome-wide DFE
+------------------------------------
+
+
+In this example, we'll add the Kim et al. HomSap/Gamma_K17 DFE to the
+Gutenkunst et al. HomSap/OutOfAfrica_3G09 model.
+We can see the DFEs available for a species in the catalog,
+and get one using the :meth:`.Species.get_dfe` method.
+
+.. code-block:: python
+
+    import numpy as np
+
+    species = stdpopsim.get_species("HomSap")
+    contig = species.get_contig("chr1", length_multiplier=0.001)
+
+    dfe = species.get_dfe("Gamma_K17")
+    print(dfe)
+
+
+Once we have the DFE, we can add it to the Contig,
+specifying which set of *intervals* it will apply to:
+
+.. code-block:: python
+
+    contig.add_dfe(intervals=np.array([[0, int(contig.length)]]), DFE=dfe)
+
+    model = species.get_demographic_model("OutOfAfrica_3G09")
+    samples = model.get_samples(100, 100, 100)  # YRI, CEU, CHB
+
+Now, we can simulate as usual:
+
+.. code-block:: python
+
+    engine = stdpopsim.get_engine("slim")
+    ts = engine.simulate(
+        model,
+        contig,
+        samples,
+        seed=123,
+        slim_scaling_factor=10,
+        slim_burn_in=10,
+    )
+
+Let's verify that we have both neutral and deleterious mutations in the resulting simulation:
+
+.. code-block:: python
+
+    mut_info = {}
+    for mut in ts.mutations():
+        for j, md in zip(mut.derived_state.split(","), mut.metadata["mutation_list"]):
+            if j not in mut_info:
+                mut_info[int(j)] = md
+
+    num_neutral = sum([mut_info[j]["selection_coeff"] == 0.0 for j in mut_info])
+    print(
+        f"There are {num_neutral} neutral mutations, and "
+        f"{len(mut_info) - num_neutral} nonneutral mutations."
+    )
+
+    # There are 323 neutral mutations, and 420 nonneutral mutations.
+
+
+.. _sec_tute_selection_single_gene:
+
+2. Simulating selection in a single gene
+----------------------------------------
+
+Next, we'll simulate a 10kb gene flanked by 10kb neutral regions,
+by specifying a particular interval to apply the HomSap/Gamma_K17 DFE to.
+Contigs come by default covered by a neutral DFE,
+so all we need to do is apply the DFE to the middle region
+(which we'll imagine is the coding region of a gene).
+This works because
+when a newly added DFE covers a portion of a Contig already covered by
+previous DFEs, the new DFE takes precedence:
+concretely, the intervals to which the new DFE apply
+are removed from the intervals associated with previous DFEs.
+
+.. code-block:: python
+
+    species = stdpopsim.get_species("HomSap")
+    dfe = species.get_dfe("Gamma_K17")
+    contig = species.get_contig(length=30000)
+    model = species.get_demographic_model("OutOfAfrica_3G09")
+    samples = model.get_samples(100, 100, 100)  # YRI, CEU, CHB
+
+    gene_interval = np.array([[10000, 20000]])
+    contig.add_dfe(intervals=gene_interval, DFE=dfe)
+
+    engine = stdpopsim.get_engine("slim")
+    ts = engine.simulate(
+        model,
+        contig,
+        samples,
+        seed=236,
+        slim_scaling_factor=10,
+        slim_burn_in=10,
+    )
+
+
+We'll count up the number of neutral and deleterious mutations in the three regions:
+
+.. code-block:: python
+
+    num_neutral = np.zeros(3, dtype="int")
+    num_del = np.zeros(3, dtype="int")
+    for site in ts.sites():
+        j = int(site.position >= gene_interval[0, 0]) + int(
+            site.position >= gene_interval[0, 1]
+        )
+        unique_muts = {}
+        for mut in site.mutations:
+            for ds, md in zip(mut.derived_state.split(","), mut.metadata["mutation_list"]):
+                if ds not in unique_muts:
+                    unique_muts[ds] = md["selection_coeff"]
+                else:
+                    assert unique_muts[ds] == md["selection_coeff"]
+        for s in unique_muts.values():
+            if s == 0:
+                num_neutral[j] += 1
+            else:
+                num_del[j] += 1
+
+    for j, (n, d) in enumerate(zip(num_neutral, num_del)):
+        print(
+            f"From {j * 1000} to {(j + 1) * 1000}: {n} neutral mutations "
+            f"and {d} deleterious mutations."
+        )
+
+    # From 0 to 1000: 50 neutral mutations and 0 deleterious mutations.
+    # From 1000 to 2000: 12 neutral mutations and 20 deleterious mutations.
+    # From 2000 to 3000: 45 neutral mutations and 0 deleterious mutations.
+
+This verifies that the only deleterious mutations are in the center bit,
+and in the center there are both deleterious and neutral mutations,
+as expected under the Gamma_K17.
+
+
+.. _sec_tute_selection_annotation:
+
+3. Simulating selection on exons
+--------------------------------
+
+The catalog also has a certain number of *annotations* available,
+obtained from Ensembl.
+For instance, for humans we have:
+
+.. code-block:: python
+
+    for a in species.annotations:
+        print(f"{a.id}: {a.description}")
+
+    # ensembl_havana_104_exons: Ensembl Havana exon annotations on GRCh38
+    # ensembl_havana_104_CDS: Ensembl Havana CDS annotations on GRCh38
+
+To simulate with the HomSap/Gamma_K17 DFE, now applied
+to *all* exons on chromosome 20
+(the remainder of the chromosome will have only neutral mutations),
+we extract the intervals from the :class:`.Annotation` object
+and use this in :meth:`.Contig.add_dfe`:
+
+.. code-block:: python
+
+    species = stdpopsim.get_species("HomSap")
+    dfe = species.get_dfe("Gamma_K17")
+    contig = species.get_contig("chr20")
+    model = species.get_demographic_model("OutOfAfrica_3G09")
+    samples = model.get_samples(100, 100, 100)  # YRI, CEU, CHB
+
+    exons = species.get_annotations("ensembl_havana_104_exons")
+    exon_intervals = exons.get_chromosome_annotations("chr20").astype("int")
+    contig.add_dfe(intervals=exon_intervals, DFE=dfe)
+
+    engine = stdpopsim.get_engine("slim")
+    ts = engine.simulate(
+        model,
+        contig,
+        samples,
+        seed=236,
+        slim_scaling_factor=100,
+        slim_burn_in=10,
+    )
+
+Note the very large scaling factor (:math:`Q=100`) that we've used here to get this
+to run fast enough to be used for a quick example!
+This is *not* expected to be a good example because of this extreme scaling,
+but nonetheless there is lower diversity in exons than outside of them:
+
+.. code-block:: python
+
+    breaks, labels = contig.dfe_breakpoints()
+
+    diffs = ts.diversity(windows=breaks, span_normalise=False)
+    pi = (
+        np.sum(diffs[labels == 1]) / np.sum(np.diff(breaks)[labels == 1]),
+        np.sum(diffs[labels == 0]) / np.sum(np.diff(breaks)[labels == 0]),
+    )
+
+    print(
+        f"Mean sequence diversity in exons is {1000 * pi[0]:.3f} differences per Kb,\n"
+        f"and outside of exons it is {1000 * pi[1]:.3f} differences per Kb."
+    )
+
+    # Mean sequence diversity in exons is 0.154 differences per Kb,
+    # and outside of exons it is 0.211 differences per Kb.
+
+
+
+.. _sec_tute_selective_sweep:
+
+4.  Selective sweep
+------------------------------------------
+
+.. warning::
+
+    The following interface for adding selective sweeps
+    is preliminary, and subject to change!
+
+You may be interested in simulating and tracking a single mutation. To illustrate
+this scenario, let's simulate a selective sweep until it reaches an abitrary
+allele frequency.
+
+First, let's define a contig and a demographic model; here, we are simulating a
+small part of chromosome 2L of DroMel with a generic constant size demography.
+The contig will be fully neutral, with the exception of the sweeping mutation
+which we will insert later.
+
+.. code-block:: python
+
+    import stdpopsim
+
+    species = stdpopsim.get_species("DroMel")
+    model = stdpopsim.PiecewiseConstantSize(100000)
+    samples = model.get_samples(100)
+    contig = species.get_contig("2L", length_multiplier=0.01)
+
+Next, we need to set things up to add a selected mutation to a randomly chosen
+chromosome in the population of our choice at a specific position in the contig.
+We must also decide the time the mutation will be added, when selection will
+start and at what frequency we want our selected mutation to be at the end of
+the simulation.
+
+Let's assume the mutation appeared 1000 generations ago, it has a positive
+effect on fitness (s=0.5). Also, we want the mutation to have reached a frequency
+of at least 0.8 by the end. Next, we'll walk through the steps required to do this:
+
+.. note::
+
+    Note that because we are doing a forward-in-time simulation, you should be
+    careful with your conditioning. For example, even a strongly selected mutation
+    would not be able to reach 80% frequency in just a few generations. Since
+    this conditioning works by re-running the simulation until the condition is
+    achieved, a nearly impossible condition will result in very long run times.
+
+First, we need to define the mutation type for the selected mutation.
+So we can refer to it later, we need its "mutation type ID". This is just
+the index of the new mutation type in the contig's list of mutation types.
+
+.. code-block:: python
+
+    mt = stdpopsim.MutationType(
+        distribution_type="f",
+        dominance_coeff=1.0,
+        distribution_args=[0.5],
+        convert_to_substitution=False,
+    )
+    dfe = stdpopsim.DFE(
+        id="new_mutation",
+        mutation_types=[mt],
+        proportions=[1.0],
+        description="added mutation",
+        long_description="mutation type to be added",
+    )
+    contig.add_dfe(
+        intervals=np.empty((0, 2), dtype="int"),
+        DFE=dfe,
+    )
+    for mt_info in contig.mutation_types():
+        if mt_info["dfe_id"] == dfe.id:
+            break
+
+    mut_id = mt_info["id"]
+
+Next, we will set up the "extended events" which will modify the demography.
+The first extended event is placing of the selected mutation,
+which will occur in a random individual from the first population (id 0),
+in the middle of the contig, 1000 generations ago.
+We specify ``save=True`` to ``stdpopsim.ext.DrawMutation``
+so that the simulation can restart from that point if the mutation is lost.
+
+.. code-block:: python
+
+    coordinate = round(contig.recombination_map.sequence_length / 2)
+    T_mut = 1000
+    extended_events = [
+        stdpopsim.ext.DrawMutation(
+            time=T_mut,
+            mutation_type_id=mut_id,
+            population_id=0,
+            coordinate=coordinate,
+            save=True,
+        )
+    ]
+
+Next, we condition on the mutation not being lost.
+Since in the next step we condition on the mutation being at 80% frequency at
+the end, this is redundant, but it allows the simulation to immediately restart
+from any generation in which the mutation is lost, rather than waiting until the end.
+Note that this conditioning must start one
+generation after the mutation is placed, for which we use
+``stdpopsim.ext.GenerationAfter(T_mut)``.
+We cannot simply specify ``T_mut - 1`` if rescaling is present,
+otherwise the conditioning would start
+at the same generation when the mutation is placed.
+
+.. code-block:: python
+
+    extended_events.append(
+        stdpopsim.ext.ConditionOnAlleleFrequency(
+            start_time=stdpopsim.ext.GenerationAfter(T_mut),
+            end_time=0,
+            mutation_type_id=mut_id,
+            population_id=0,
+            op=">",
+            allele_frequency=0.0,
+        )
+    )
+
+Finally, we condition on the mutation being above 80% at the end of the simulation.
+(The "end" is at time 0, since "time" is in generations before the end of the simulation.)
+
+.. code-block:: python
+
+    extended_events.append(
+        stdpopsim.ext.ConditionOnAlleleFrequency(
+            start_time=0,
+            end_time=0,
+            mutation_type_id=mut_id,
+            population_id=0,
+            op=">=",
+            allele_frequency=0.8,
+        )
+    )
+
+Now we can simulate, using SLiM of course.
+For comparison, we will run the same simulation
+without selection - i.e., without the "extended events":
+
+.. code-block:: python
+
+    engine = stdpopsim.get_engine("slim")
+    ts_sweep = engine.simulate(
+        model,
+        contig,
+        samples,
+        seed=123,
+        extended_events=extended_events,
+        slim_scaling_factor=100,
+        slim_burn_in=0.1,
+    )
+
+    ts_neutral = engine.simulate(
+        model,
+        contig,
+        samples,
+        seed=123,
+        # no extended events
+        slim_scaling_factor=100,
+        slim_burn_in=0.1,
+    )
+
+Lastly, we can directly compute nucleotide diversity in 10Kb windows for both the
+neutral and sweep simulations and plot them side by side.
+
+.. code-block:: python
+
+    import matplotlib.pyplot as plt
+
+    windows = [w for w in range(0, int(ts_neutral.sequence_length), 10000)]
+    windows.append(int(ts_neutral.sequence_length))
+    neutral_pi = ts_neutral.diversity(windows=windows)
+    sweep_pi = ts_sweep.diversity(windows=windows)
+    plt.plot(neutral_pi, "b", label="neutral")
+    plt.plot(sweep_pi, "r", label="sweep")
+    plt.legend()
+    plt.xlabel("Genomic window")
+    plt.ylabel("Diversity")
+    plt.show()
+
+.. image:: _static/tute-sweep.png
+    :width: 500px
+    :align: center
+    :alt: Plot with nucleotide diversity along the chromosome for simulations with a without a selective sweep.
+
 
 .. _sec_tute_analyses:
 
@@ -881,7 +1377,7 @@ Calculating genetic divergence
 ==============================
 
 Next we'll give an example of computing some summaries of the simulation output.
-The `tskit <https://tskit.readthedocs.io/en/latest/>`_  documentation
+The `tskit <https://tskit.dev/tskit/docs/stable/>`__  documentation
 has details on many more statistics that you can compute using the tree sequences.
 We will simulate some samples of human chromosomes
 from different populations,
@@ -952,7 +1448,7 @@ These quantities can be computed directly from our sample using tskit's
 :meth:`tskit.TreeSequence.divergence`.
 
 By looking at
-`the documentation <https://tskit.readthedocs.io/en/latest/python-api.html#tskit.TreeSequence.divergence>`_
+:meth:`the documentation <tskit.TreeSequence.divergence>`
 for this method, we can see that we'll need two inputs: ``sample_sets`` and
 ``indexes``.
 In our case, we want ``sample_sets`` to give the list
@@ -1181,7 +1677,7 @@ The somewhat mysterious ``polarised=True`` option indicates that we wish to
 calculate the AFS for derived alleles only, without "folding" the spectrum,
 and the ``span_normalise=False`` option disables tskit's
 default behaviour of dividing by the sequence length. See
-`tskit's documentation <https://tskit.readthedocs.io/en/latest/stats.html#interface>`__
+`tskit's documentation <https://tskit.dev/tskit/docs/stable/stats.html#interface>`__
 for more information on these options.
 
 We will do further analysis in the next section, but you might first wish to convince
@@ -1216,7 +1712,7 @@ We will scale each AFS by the number of mutated sites in the corresponding sampl
     plt.ylabel("Proportion of mutated sites in sample", fontweight="bold")
     ax.set_xticks(np.arange(0, 11))
     ax.legend()
-    plt.plot()
+    plt.show()
 
 .. image:: _static/tute-sfs.png
     :align: center

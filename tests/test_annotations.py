@@ -1,20 +1,19 @@
 """
 Tests for the annotations management.
 """
-import unittest
 from unittest import mock
 import gzip
 import tempfile
 import os.path
 import shutil
 import pathlib
-
-import pandas
-
+import pytest
+import numpy as np
+import logging
 import stdpopsim
 from stdpopsim import utils
 import tests
-
+import maintenance as maint
 
 # Here we download all the annotations in one go and store
 # then in the local cache directory, _test_cache. Tests are then run
@@ -26,33 +25,34 @@ import tests
 saved_urls = {}
 
 
-def setUpModule():
-    destination = pathlib.Path("_test_cache/zipfiles/")
+def setup_module():
+    destination = pathlib.Path("_test_cache/tarballs")
     for an in stdpopsim.all_annotations():
-        key = an._cache.cache_path
-        local_file = destination / key
+        key = an.id
+        local_file = destination / (key + ".tar.gz")
+        logging.info(f"key {key} local_file {local_file}")
         if not local_file.exists():
             cache_dir = local_file.parent
             cache_dir.mkdir(exist_ok=True, parents=True)
-            print("Downloading", an.zarr_url)
-            utils.download(an.zarr_url, local_file)
+            print("Downloading", an.intervals_url)
+            utils.download(an.intervals_url, local_file)
         # This assertion could fail if we update a file on AWS,
         # or a developer creates a new annotation with the wrong checksum
         # (in the latter case, this should at least be caught during CI tests).
-        assert utils.sha256(local_file) == an.zarr_sha256, (
+        assert utils.sha256(local_file) == an.intervals_sha256, (
             f"SHA256 for {local_file} doesn't match the SHA256 for "
             f"{an.id}. If you didn't add this SHA256 yourself, "
             f"try deleting {local_file} and restarting the tests."
         )
-        saved_urls[key] = an.zarr_url
-        an.zarr_url = local_file.resolve().as_uri()
-        an._cache.url = an.zarr_url
+        saved_urls[key] = an.intervals_url
+        an.intervals_url = local_file.resolve().as_uri()
+        an._cache.url = an.intervals_url
 
 
-def tearDownModule():
+def teardown_module():
     for an in stdpopsim.all_annotations():
-        an.zarr_url = saved_urls[an._cache.cache_path]
-        an._cache.url = an.zarr_url
+        an.intervals_url = saved_urls[an.id]
+        an._cache.url = an.intervals_url
 
 
 class AnnotationTestClass(stdpopsim.Annotation):
@@ -73,9 +73,13 @@ class AnnotationTestClass(stdpopsim.Annotation):
             species=_species,
             id="test_annotation",
             url="http://example.com/annotation.gff.gz",
-            zarr_url="http://example.com/annotation.zip",
-            zarr_sha256="1234",  # this shouldn't be checked anywhere
+            intervals_url="http://example.com/annotation.zip",
+            intervals_sha256="1234",  # this shouldn't be checked anywhere
+            gff_sha256="6789",
             description="test annotation",
+            file_pattern="yolo_{id}.txt",
+            annotation_source="your mom",
+            annotation_type="test",
         )
 
 
@@ -112,11 +116,11 @@ class TestAnnotation(tests.CacheWritingTest):
     def test_cache_dirs(self):
         an = AnnotationTestClass()
         cache_dir = stdpopsim.get_cache_dir() / "annotations" / an.species.id
-        self.assertEqual(an.cache_path.parent, cache_dir)
+        assert an.cache_path.parent == cache_dir
 
     def test_str(self):
         an = AnnotationTestClass()
-        self.assertGreater(len(str(an)), 0)
+        assert len(str(an)) > 0
 
 
 class TestAnnotationDownload(tests.CacheWritingTest):
@@ -128,25 +132,25 @@ class TestAnnotationDownload(tests.CacheWritingTest):
         an = AnnotationTestClass()
         with mock.patch("stdpopsim.utils.download", autospec=True) as mocked_get:
             # The destination file will be missing.
-            with self.assertRaises(FileNotFoundError):
+            with pytest.raises(FileNotFoundError):
                 an.download()
-        mocked_get.assert_called_once_with(an.zarr_url, filename=unittest.mock.ANY)
+        mocked_get.assert_called_once_with(an.intervals_url, filename=mock.ANY)
 
     def test_incorrect_url(self):
         an = AnnotationTestClass()
-        an.zarr_url = "http://asdfwersdf.com/foozip"
-        with self.assertRaises(OSError):
+        an.intervals_url = "http://asdfwersdf.com/foozip"
+        with pytest.raises(OSError):
             an.download()
 
     def test_download_over_cache(self):
         # TODO: The HomSap annotations are huge. Once we include a smaller
         # annotation set, we should instead use that, so tests are faster.
         species = stdpopsim.get_species("HomSap")
-        an = species.get_annotations("Ensembl_GRCh38_gff3")
+        an = species.get_annotations("ensembl_havana_104_CDS")
         an.download()
-        self.assertTrue(an.is_cached())
+        assert an.is_cached()
         an.download()
-        self.assertTrue(an.is_cached())
+        assert an.is_cached()
 
 
 class TestGetChromosomeAnnotations(tests.CacheReadingTest):
@@ -155,33 +159,78 @@ class TestGetChromosomeAnnotations(tests.CacheReadingTest):
     using the Ensembl_GRCh38 human GFF.
     """
 
-    # TODO: The HomSap annotations are huge. Once we include a smaller
-    # annotation set, we should instead use that, so tests are faster.
-    species = stdpopsim.get_species("HomSap")
-    an = species.get_annotations("Ensembl_GRCh38_gff3")
+    @classmethod
+    def setup_class(cls):
+        species = stdpopsim.get_species("HomSap")
+        cls.an = species.get_annotations("ensembl_havana_104_exons")
 
     def test_known_chromosome(self):
         cm = self.an.get_chromosome_annotations("21")
-        self.assertIsInstance(cm, pandas.DataFrame)
+        assert isinstance(cm, np.ndarray)
 
     def test_known_chromosome_prefix(self):
         cm = self.an.get_chromosome_annotations("chr21")
-        self.assertIsInstance(cm, pandas.DataFrame)
+        assert isinstance(cm, np.ndarray)
 
     def test_unknown_chromosome(self):
         for bad_chrom in ["", "ABD", None]:
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError):
                 self.an.get_chromosome_annotations(bad_chrom)
 
-    def test_get_genes(self):
-        g = self.an.get_genes_from_chromosome("21")
-        self.assertIsInstance(g, pandas.DataFrame)
 
-    def test_get_genes_full(self):
-        g = self.an.get_genes_from_chromosome("21", full_table=True)
-        self.assertIsInstance(g, pandas.DataFrame)
+class TestGetChromosomeAnnotationsDroMel(tests.CacheReadingTest):
+    """
+    Tests if we get chromosome level annotations
+    using the FlyBase_BDGP6.32.51_CDS GFF.
+    """
 
-    def test_bad_annot_type(self):
-        bad_annot = "foo"
-        with self.assertRaises(ValueError):
-            self.an.get_annotation_type_from_chromomosome(bad_annot, "21")
+    @classmethod
+    def setup_class(cls):
+        species = stdpopsim.get_species("DroMel")
+        cls.an = species.get_annotations("FlyBase_BDGP6.32.51_CDS")
+
+    def test_known_chromosome(self):
+        cm = self.an.get_chromosome_annotations("2L")
+        assert isinstance(cm, np.ndarray)
+
+    def test_known_chromosome_prefix(self):
+        cm = self.an.get_chromosome_annotations("chr2L")
+        assert isinstance(cm, np.ndarray)
+
+    def test_unknown_chromosome(self):
+        for bad_chrom in ["", "ABD", None]:
+            with pytest.raises(ValueError):
+                self.an.get_chromosome_annotations(bad_chrom)
+
+
+class TestIntervalMerge:
+    """
+    Tests for the Annotation stuff.
+    """
+
+    def test_merged_static(self):
+        for closed in (True, False):
+            assert maint.merged([], closed=closed) == []
+            assert maint.merged([(10, 20), (15, 30)], closed=closed) == [(10, 30)]
+            assert maint.merged([(10, 20), (20, 30)], closed=closed) == [(10, 30)]
+            assert maint.merged([(10, 20), (22, 30)], closed=closed) == [
+                (10, 20),
+                (22, 30),
+            ]
+            assert maint.merged([(10, 20), (12, 16)], closed=closed) == [(10, 20)]
+            assert maint.merged([(12, 16), (10, 20), (13, 15)], closed=closed) == [
+                (10, 20)
+            ]
+
+        assert maint.merged([(10, 20), (21, 30)], closed=True) == [(10, 30)]
+        assert maint.merged([(10, 20), (21, 30)], closed=False) == [(10, 20), (21, 30)]
+
+    def test_merged_random(self):
+        rng = np.random.default_rng(1234)
+        for closed in (True, False):
+            # Check merging is idempotent.
+            for _ in range(100):
+                starts = rng.integers(1, 1000, size=100)
+                ends = starts + rng.integers(1, 100, size=len(starts))
+                merged_intervals = maint.merged(zip(starts, ends), closed=closed)
+                assert merged_intervals == maint.merged(merged_intervals, closed=closed)
